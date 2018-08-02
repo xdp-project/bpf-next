@@ -354,8 +354,7 @@ static bool mlx5e_xmit_xdp_frame(struct mlx5e_xdpsq *sq,
 
 static void mlx5e_free_xdpsq_desc(struct mlx5e_xdpsq *sq,
 				  struct mlx5e_xdp_wqe_info *wi,
-				  u32 *xsk_frames,
-				  bool recycle)
+				  u32 *xsk_frames)
 {
 	struct mlx5e_xdp_info_fifo *xdpi_fifo = &sq->db.xdpi_fifo;
 	u16 i;
@@ -372,7 +371,7 @@ static void mlx5e_free_xdpsq_desc(struct mlx5e_xdpsq *sq,
 			break;
 		case MLX5E_XDP_XMIT_MODE_PAGE:
 			/* XDP_TX from the regular RQ */
-			mlx5e_page_release_dynamic(xdpi.page.rq, &xdpi.page.di, recycle);
+			mlx5e_page_release_dynamic(xdpi.page.rq, &xdpi.page.di);
 			break;
 		case MLX5E_XDP_XMIT_MODE_XSK:
 			/* AF_XDP send */
@@ -430,7 +429,7 @@ bool mlx5e_poll_xdpsq_cq(struct mlx5e_cq *cq)
 
 			sqcc += wi->num_wqebbs;
 
-			mlx5e_free_xdpsq_desc(sq, wi, &xsk_frames, true);
+			mlx5e_free_xdpsq_desc(sq, wi, &xsk_frames);
 		} while (!last_wqe);
 	} while ((++i < MLX5E_TX_CQ_POLL_BUDGET) && (cqe = mlx5_cqwq_get_cqe(&cq->wq)));
 
@@ -461,7 +460,7 @@ void mlx5e_free_xdpsq_descs(struct mlx5e_xdpsq *sq)
 
 		sq->cc += wi->num_wqebbs;
 
-		mlx5e_free_xdpsq_desc(sq, wi, &xsk_frames, false);
+		mlx5e_free_xdpsq_desc(sq, wi, &xsk_frames);
 	}
 
 	if (xsk_frames)
