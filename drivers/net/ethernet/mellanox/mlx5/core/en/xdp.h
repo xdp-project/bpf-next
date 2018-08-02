@@ -32,6 +32,7 @@
 #ifndef __MLX5_EN_XDP_H__
 #define __MLX5_EN_XDP_H__
 
+#include <net/page_pool.h>
 #include "en.h"
 
 #define MLX5E_XDP_MIN_INLINE (ETH_HLEN + VLAN_HLEN)
@@ -40,7 +41,7 @@
 #define MLX5E_XDP_TX_DS_COUNT (MLX5E_XDP_TX_EMPTY_DS_COUNT + 1 /* SG DS */)
 
 int mlx5e_xdp_max_mtu(struct mlx5e_params *params);
-bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
+bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct page *page,
 		      void *va, u16 *rx_headroom, u32 *len);
 bool mlx5e_poll_xdpsq_cq(struct mlx5e_cq *cq, struct mlx5e_rq *rq);
 void mlx5e_free_xdpsq_descs(struct mlx5e_xdpsq *sq, struct mlx5e_rq *rq);
@@ -101,7 +102,6 @@ mlx5e_xdp_mpwqe_add_dseg(struct mlx5e_xdpsq *sq, struct mlx5e_xdp_info *xdpi,
 			 struct mlx5e_xdpsq_stats *stats)
 {
 	struct mlx5e_xdp_mpwqe *session = &sq->mpwqe;
-	dma_addr_t dma_addr    = xdpi->dma_addr;
 	struct xdp_frame *xdpf = xdpi->xdpf;
 	struct mlx5_wqe_data_seg *dseg =
 		(struct mlx5_wqe_data_seg *)session->wqe + session->ds_count;
@@ -132,7 +132,7 @@ mlx5e_xdp_mpwqe_add_dseg(struct mlx5e_xdpsq *sq, struct mlx5e_xdp_info *xdpi,
 	}
 
 no_inline:
-	dseg->addr       = cpu_to_be64(dma_addr);
+	dseg->addr       = cpu_to_be64(xdpi->data_dma_addr);
 	dseg->byte_count = cpu_to_be32(dma_len);
 	dseg->lkey       = sq->mkey_be;
 	session->ds_count++;
