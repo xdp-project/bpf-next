@@ -184,65 +184,9 @@ static inline u32 mlx5e_decompress_cqes_start(struct mlx5e_rq *rq,
 	return mlx5e_decompress_cqes_cont(rq, wq, 1, budget_rem) - 1;
 }
 
-static inline bool mlx5e_page_is_reserved(struct page *page)
-{
-	return page_is_pfmemalloc(page) || page_to_nid(page) != numa_mem_id();
-}
-
-static inline bool mlx5e_rx_cache_put(struct mlx5e_rq *rq,
-				      struct mlx5e_dma_info *dma_info)
-{
-	struct mlx5e_page_cache *cache = &rq->page_cache;
-	u32 tail_next = (cache->tail + 1) & (MLX5E_CACHE_SIZE - 1);
-	struct mlx5e_rq_stats *stats = rq->stats;
-
-	if (tail_next == cache->head) {
-		stats->cache_full++;
-		return false;
-	}
-
-	if (unlikely(mlx5e_page_is_reserved(dma_info->page))) {
-		stats->cache_waive++;
-		return false;
-	}
-
-	cache->page_cache[cache->tail] = *dma_info;
-	cache->tail = tail_next;
-	return true;
-}
-
-static inline bool mlx5e_rx_cache_get(struct mlx5e_rq *rq,
-				      struct mlx5e_dma_info *dma_info)
-{
-	struct mlx5e_page_cache *cache = &rq->page_cache;
-	struct mlx5e_rq_stats *stats = rq->stats;
-
-	if (unlikely(cache->head == cache->tail)) {
-		stats->cache_empty++;
-		return false;
-	}
-
-	if (page_ref_count(cache->page_cache[cache->head].page) != 1) {
-		stats->cache_busy++;
-		return false;
-	}
-
-	*dma_info = cache->page_cache[cache->head];
-	cache->head = (cache->head + 1) & (MLX5E_CACHE_SIZE - 1);
-	stats->cache_reuse++;
-
-	dma_sync_single_for_device(rq->pdev, dma_info->addr,
-				   PAGE_SIZE,
-				   DMA_FROM_DEVICE);
-	return true;
-}
-
 static inline int mlx5e_page_alloc_pool(struct mlx5e_rq *rq,
 					struct mlx5e_dma_info *dma_info)
 {
-	if (mlx5e_rx_cache_get(rq, dma_info))
-		return 0;
-
 	dma_info->page = page_pool_dev_alloc_pages(rq->page_pool);
 	if (unlikely(!dma_info->page))
 		return -ENOMEM;
@@ -276,14 +220,11 @@ void mlx5e_page_release_dynamic(struct mlx5e_rq *rq,
 				struct mlx5e_dma_info *dma_info,
 				bool recycle)
 {
-	if (likely(recycle)) {
-		if (mlx5e_rx_cache_put(rq, dma_info))
-			return;
+	mlx5e_page_dma_unmap(rq, dma_info);
 
-		mlx5e_page_dma_unmap(rq, dma_info);
+	if (likely(recycle)) {
 		page_pool_recycle_direct(rq->page_pool, dma_info->page);
 	} else {
-		mlx5e_page_dma_unmap(rq, dma_info);
 		page_pool_release_page(rq->page_pool, dma_info->page);
 		put_page(dma_info->page);
 	}
@@ -1167,7 +1108,7 @@ void mlx5e_handle_rx_cqe(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
 	if (!skb) {
 		/* probably for XDP */
 		if (__test_and_clear_bit(MLX5E_RQ_FLAG_XDP_XMIT, rq->flags)) {
-			/* do not return page to cache,
+			/* do not return page to pool,
 			 * it will be returned on XDP_TX completion.
 			 */
 			goto wq_cyc_pop;
@@ -1210,7 +1151,7 @@ void mlx5e_handle_rx_cqe_rep(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
 	if (!skb) {
 		/* probably for XDP */
 		if (__test_and_clear_bit(MLX5E_RQ_FLAG_XDP_XMIT, rq->flags)) {
-			/* do not return page to cache,
+			/* do not return page to pool,
 			 * it will be returned on XDP_TX completion.
 			 */
 			goto wq_cyc_pop;

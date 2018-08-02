@@ -612,9 +612,6 @@ static int mlx5e_alloc_rq(struct mlx5e_channel *c,
 		rq->dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
 	}
 
-	rq->page_cache.head = 0;
-	rq->page_cache.tail = 0;
-
 	return 0;
 
 err_free:
@@ -640,8 +637,6 @@ err_rq_wq_destroy:
 
 static void mlx5e_free_rq(struct mlx5e_rq *rq)
 {
-	int i;
-
 	if (rq->xdp_prog)
 		bpf_prog_put(rq->xdp_prog);
 
@@ -653,17 +648,6 @@ static void mlx5e_free_rq(struct mlx5e_rq *rq)
 	default: /* MLX5_WQ_TYPE_CYCLIC */
 		kvfree(rq->wqe.frags);
 		mlx5e_free_di_list(rq);
-	}
-
-	for (i = rq->page_cache.head; i != rq->page_cache.tail;
-	     i = (i + 1) & (MLX5E_CACHE_SIZE - 1)) {
-		struct mlx5e_dma_info *dma_info = &rq->page_cache.page_cache[i];
-
-		/* With AF_XDP, page_cache is not used, so this loop is not
-		 * entered, and it's safe to call mlx5e_page_release_dynamic
-		 * directly.
-		 */
-		mlx5e_page_release_dynamic(rq, dma_info, false);
 	}
 
 	xdp_rxq_info_unreg(&rq->xdp_rxq);
