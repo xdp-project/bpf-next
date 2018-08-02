@@ -309,7 +309,7 @@ bool mlx5e_poll_xdpsq_cq(struct mlx5e_cq *cq, struct mlx5e_rq *rq)
 							 xdpi.xdpf->len, DMA_TO_DEVICE);
 				} else {
 					/* Recycle RX page */
-					mlx5e_page_release(rq, &xdpi.di, true);
+					mlx5e_page_release(rq, &xdpi.di);
 				}
 			}
 		} while (!last_wqe);
@@ -350,7 +350,7 @@ void mlx5e_free_xdpsq_descs(struct mlx5e_xdpsq *sq, struct mlx5e_rq *rq)
 						 xdpi.xdpf->len, DMA_TO_DEVICE);
 			} else {
 				/* Recycle RX page */
-				mlx5e_page_release(rq, &xdpi.di, false);
+				mlx5e_page_release(rq, &xdpi.di);
 			}
 		}
 	}
