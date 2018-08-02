@@ -546,7 +546,7 @@ static int mlx5e_alloc_rq(struct mlx5e_channel *c,
 	} else {
 		/* Create a page_pool and register it with rxq */
 		pp_params.order     = 0;
-		pp_params.flags     = 0; /* No-internal DMA mapping in page_pool */
+		pp_params.flags     = PP_FLAG_DMA_MAP; /* Internal DMA mapping in page_pool */
 		pp_params.pool_size = pool_size;
 		pp_params.nid       = cpu_to_node(c->cpu);
 		pp_params.dev       = c->pdev;

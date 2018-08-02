@@ -105,7 +105,7 @@ mlx5e_xmit_xdp_buff(struct mlx5e_xdpsq *sq, struct mlx5e_rq *rq,
 
 		xdpi.mode = MLX5E_XDP_XMIT_MODE_PAGE;
 
-		dma_addr = di->addr + (xdpf->data - (void *)xdpf);
+		dma_addr = di_get_dma(di) + (xdpf->data - (void *)xdpf);
 		dma_sync_single_for_device(sq->pdev, dma_addr, xdptxd.len,
 					   DMA_TO_DEVICE);
 
@@ -161,8 +161,6 @@ bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
 			goto xdp_abort;
 		__set_bit(MLX5E_RQ_FLAG_XDP_XMIT, rq->flags);
 		__set_bit(MLX5E_RQ_FLAG_XDP_REDIRECT, rq->flags);
-		if (!xsk)
-			mlx5e_page_dma_unmap(rq, di);
 		rq->stats->xdp_redirect++;
 		return true;
 	default:

@@ -180,6 +180,10 @@ mlx5e_tx_dma_unmap(struct device *pdev, struct mlx5e_sq_dma *dma)
 	}
 }
 
+static inline dma_addr_t di_get_dma(struct mlx5e_dma_info *di) {
+	return page_pool_get_dma_addr(di->page);
+}
+
 /* SW parser related functions */
 
 struct mlx5e_swp_spec {

@@ -33,11 +33,11 @@ int mlx5e_xsk_page_alloc_umem(struct mlx5e_rq *rq,
 	 * stage when creating a WQE. In non-striding RQ case, headroom is
 	 * accounted in mlx5e_alloc_rx_wqe.
 	 */
-	dma_info->addr = xdp_umem_get_dma(umem, handle);
+	dma_info->xsk.addr = xdp_umem_get_dma(umem, handle);
 
 	xsk_umem_discard_addr_rq(umem);
 
-	dma_sync_single_for_device(rq->pdev, dma_info->addr, PAGE_SIZE,
+	dma_sync_single_for_device(rq->pdev, dma_info->xsk.addr, PAGE_SIZE,
 				   DMA_BIDIRECTIONAL);
 
 	return 0;
@@ -104,7 +104,7 @@ struct sk_buff *mlx5e_xsk_skb_from_cqe_mpwrq_linear(struct mlx5e_rq *rq,
 	}
 
 	/* head_offset is not used in this function, because di->xsk.data and
-	 * di->addr point directly to the necessary place. Furthermore, in the
+	 * di->xsk.addr point directly to the necessary place. Furthermore, in the
 	 * current implementation, UMR pages are mapped to XSK frames, so
 	 * head_offset should always be 0.
 	 */
@@ -114,7 +114,7 @@ struct sk_buff *mlx5e_xsk_skb_from_cqe_mpwrq_linear(struct mlx5e_rq *rq,
 	data           = va + rx_headroom;
 	frag_size      = rq->buff.headroom + cqe_bcnt32;
 
-	dma_sync_single_for_cpu(rq->pdev, di->addr, frag_size, DMA_BIDIRECTIONAL);
+	dma_sync_single_for_cpu(rq->pdev, di->xsk.addr, frag_size, DMA_BIDIRECTIONAL);
 	prefetch(data);
 
 	rcu_read_lock();
@@ -160,7 +160,7 @@ struct sk_buff *mlx5e_xsk_skb_from_cqe_linear(struct mlx5e_rq *rq,
 	u32 frag_size;
 
 	/* wi->offset is not used in this function, because di->xsk.data and
-	 * di->addr point directly to the necessary place. Furthermore, in the
+	 * di->xsk.addr point directly to the necessary place. Furthermore, in the
 	 * current implementation, one page = one packet = one frame, so
 	 * wi->offset should always be 0.
 	 */
@@ -170,7 +170,7 @@ struct sk_buff *mlx5e_xsk_skb_from_cqe_linear(struct mlx5e_rq *rq,
 	data           = va + rx_headroom;
 	frag_size      = rq->buff.headroom + cqe_bcnt;
 
-	dma_sync_single_for_cpu(rq->pdev, di->addr, frag_size, DMA_BIDIRECTIONAL);
+	dma_sync_single_for_cpu(rq->pdev, di->xsk.addr, frag_size, DMA_BIDIRECTIONAL);
 	prefetch(data);
 
 	if (unlikely(get_cqe_opcode(cqe) != MLX5_CQE_RESP_SEND)) {
