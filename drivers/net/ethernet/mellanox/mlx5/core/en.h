@@ -396,8 +396,8 @@ struct mlx5e_dma_info {
 
 struct mlx5e_xdp_info {
 	struct xdp_frame      *xdpf;
-	dma_addr_t            dma_addr;
-	struct mlx5e_dma_info di;
+	dma_addr_t             data_dma_addr;
+	struct page           *page;
 };
 
 struct mlx5e_xdp_info_fifo {
@@ -490,17 +490,13 @@ mlx5e_wqc_has_room_for(struct mlx5_wq_cyc *wq, u16 cc, u16 pc, u16 n)
 }
 
 struct mlx5e_wqe_frag_info {
-	struct mlx5e_dma_info *di;
+	struct page **pagep;
 	u32 offset;
 	bool last_in_page;
 };
 
-struct mlx5e_umr_dma_info {
-	struct mlx5e_dma_info  dma_info[MLX5_MPWRQ_PAGES_PER_WQE];
-};
-
 struct mlx5e_mpw_info {
-	struct mlx5e_umr_dma_info umr;
+	struct page *umr_page_arr[MLX5_MPWRQ_PAGES_PER_WQE];
 	u16 consumed_strides;
 	DECLARE_BITMAP(xdp_xmit_bitmap, MLX5_MPWRQ_PAGES_PER_WQE);
 };
@@ -540,7 +536,7 @@ struct mlx5e_rq {
 		struct {
 			struct mlx5_wq_cyc          wq;
 			struct mlx5e_wqe_frag_info *frags;
-			struct mlx5e_dma_info      *di;
+			struct page               **page_arr;
 			struct mlx5e_rq_frags_info  info;
 			mlx5e_fp_skb_from_cqe       skb_from_cqe;
 		} wqe;
@@ -771,7 +767,6 @@ bool mlx5e_check_fragmented_striding_rq_cap(struct mlx5_core_dev *mdev);
 bool mlx5e_striding_rq_possible(struct mlx5_core_dev *mdev,
 				struct mlx5e_params *params);
 
-void mlx5e_page_release(struct mlx5e_rq *rq, struct mlx5e_dma_info *dma_info);
 void mlx5e_handle_rx_cqe(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe);
 void mlx5e_handle_rx_cqe_mpwrq(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe);
 bool mlx5e_post_rx_wqes(struct mlx5e_rq *rq);

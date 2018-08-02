@@ -34,7 +34,7 @@
 #include "en/xdp.h"
 
 static inline bool
-mlx5e_xmit_xdp_buff(struct mlx5e_xdpsq *sq, struct mlx5e_dma_info *di,
+mlx5e_xmit_xdp_buff(struct mlx5e_xdpsq *sq, struct page *page,
 		    struct xdp_buff *xdp)
 {
 	struct mlx5e_xdp_info xdpi;
@@ -42,16 +42,17 @@ mlx5e_xmit_xdp_buff(struct mlx5e_xdpsq *sq, struct mlx5e_dma_info *di,
 	xdpi.xdpf = convert_to_xdp_frame(xdp);
 	if (unlikely(!xdpi.xdpf))
 		return false;
-	xdpi.dma_addr = di->addr + (xdpi.xdpf->data - (void *)xdpi.xdpf);
-	dma_sync_single_for_device(sq->pdev, xdpi.dma_addr,
+	xdpi.data_dma_addr = page_pool_get_dma_addr(page) +
+		(xdpi.xdpf->data - (void *)xdpi.xdpf);
+	dma_sync_single_for_device(sq->pdev, xdpi.data_dma_addr,
 				   xdpi.xdpf->len, PCI_DMA_TODEVICE);
-	xdpi.di = *di;
+	xdpi.page = page;
 
 	return sq->xmit_xdp_frame(sq, &xdpi);
 }
 
 /* returns true if packet was consumed by xdp */
-bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
+bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct page *page,
 		      void *va, u16 *rx_headroom, u32 *len)
 {
 	struct bpf_prog *prog = READ_ONCE(rq->xdp_prog);
@@ -75,7 +76,7 @@ bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
 		*len = xdp.data_end - xdp.data;
 		return false;
 	case XDP_TX:
-		if (unlikely(!mlx5e_xmit_xdp_buff(&rq->xdpsq, di, &xdp)))
+		if (unlikely(!mlx5e_xmit_xdp_buff(&rq->xdpsq, page, &xdp)))
 			goto xdp_abort;
 		__set_bit(MLX5E_RQ_FLAG_XDP_XMIT, rq->flags); /* non-atomic */
 		return true;
@@ -161,9 +162,9 @@ static bool mlx5e_xmit_xdp_frame_mpwqe(struct mlx5e_xdpsq *sq,
 	struct mlx5e_xdp_mpwqe *session = &sq->mpwqe;
 	struct mlx5e_xdpsq_stats *stats = sq->stats;
 
-	dma_addr_t dma_addr    = xdpi->dma_addr;
 	struct xdp_frame *xdpf = xdpi->xdpf;
-	unsigned int dma_len   = xdpf->len;
+	dma_addr_t dma_addr  = xdpi->data_dma_addr;
+	unsigned int dma_len = xdpf->len;
 
 	if (unlikely(sq->hw_mtu < dma_len)) {
 		stats->err++;
@@ -203,7 +204,7 @@ static bool mlx5e_xmit_xdp_frame(struct mlx5e_xdpsq *sq, struct mlx5e_xdp_info *
 	struct mlx5_wqe_data_seg *dseg = wqe->data;
 
 	struct xdp_frame *xdpf = xdpi->xdpf;
-	dma_addr_t dma_addr  = xdpi->dma_addr;
+	dma_addr_t dma_addr  = xdpi->data_dma_addr;
 	unsigned int dma_len = xdpf->len;
 
 	struct mlx5e_xdpsq_stats *stats = sq->stats;
@@ -303,12 +304,12 @@ bool mlx5e_poll_xdpsq_cq(struct mlx5e_cq *cq, struct mlx5e_rq *rq)
 					mlx5e_xdpi_fifo_pop(xdpi_fifo);
 
 				if (is_redirect) {
-					xdp_return_frame(xdpi.xdpf);
-					dma_unmap_single(sq->pdev, xdpi.dma_addr,
+					dma_unmap_single(sq->pdev, xdpi.data_dma_addr,
 							 xdpi.xdpf->len, DMA_TO_DEVICE);
+					xdp_return_frame(xdpi.xdpf);
 				} else {
 					/* Recycle RX page */
-					mlx5e_page_release(rq, &xdpi.di);
+					page_pool_recycle_direct(rq->page_pool, xdpi.page);
 				}
 			}
 		} while (!last_wqe);
@@ -344,12 +345,12 @@ void mlx5e_free_xdpsq_descs(struct mlx5e_xdpsq *sq, struct mlx5e_rq *rq)
 				mlx5e_xdpi_fifo_pop(xdpi_fifo);
 
 			if (is_redirect) {
-				xdp_return_frame(xdpi.xdpf);
-				dma_unmap_single(sq->pdev, xdpi.dma_addr,
+				dma_unmap_single(sq->pdev, xdpi.data_dma_addr,
 						 xdpi.xdpf->len, DMA_TO_DEVICE);
+				xdp_return_frame(xdpi.xdpf);
 			} else {
 				/* Recycle RX page */
-				mlx5e_page_release(rq, &xdpi.di);
+				page_pool_recycle_direct(rq->page_pool, xdpi.page);
 			}
 		}
 	}
@@ -382,9 +383,9 @@ int mlx5e_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 		struct xdp_frame *xdpf = frames[i];
 		struct mlx5e_xdp_info xdpi;
 
-		xdpi.dma_addr = dma_map_single(sq->pdev, xdpf->data, xdpf->len,
-					       DMA_TO_DEVICE);
-		if (unlikely(dma_mapping_error(sq->pdev, xdpi.dma_addr))) {
+		xdpi.data_dma_addr = dma_map_single(sq->pdev, xdpf->data,
+						    xdpf->len, DMA_TO_DEVICE);
+		if (unlikely(dma_mapping_error(sq->pdev, xdpi.data_dma_addr))) {
 			xdp_return_frame_rx_napi(xdpf);
 			drops++;
 			continue;
@@ -393,7 +394,7 @@ int mlx5e_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 		xdpi.xdpf = xdpf;
 
 		if (unlikely(!sq->xmit_xdp_frame(sq, &xdpi))) {
-			dma_unmap_single(sq->pdev, xdpi.dma_addr,
+			dma_unmap_single(sq->pdev, xdpi.data_dma_addr,
 					 xdpf->len, DMA_TO_DEVICE);
 			xdp_return_frame_rx_napi(xdpf);
 			drops++;
