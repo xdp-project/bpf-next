@@ -32,6 +32,7 @@
 #ifndef __MLX5_EN_XDP_H__
 #define __MLX5_EN_XDP_H__
 
+#include <net/page_pool.h>
 #include "en.h"
 
 #define MLX5E_XDP_MAX_MTU ((int)(PAGE_SIZE - \
@@ -40,7 +41,7 @@
 #define MLX5E_XDP_TX_DS_COUNT \
 	((sizeof(struct mlx5e_tx_wqe) / MLX5_SEND_WQE_DS) + 1 /* SG DS */)
 
-bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
+bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct page *page,
 		      void *va, u16 *rx_headroom, u32 *len);
 bool mlx5e_poll_xdpsq_cq(struct mlx5e_cq *cq);
 void mlx5e_free_xdpsq_descs(struct mlx5e_xdpsq *sq);
