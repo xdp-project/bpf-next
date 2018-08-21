@@ -141,4 +141,8 @@ static inline bool is_page_pool_compiled_in(void)
 #endif
 }
 
+static inline dma_addr_t page_pool_get_dma_addr(struct page *page)
+{
+	return page_private(page);
+}
 #endif /* _NET_PAGE_POOL_H */
