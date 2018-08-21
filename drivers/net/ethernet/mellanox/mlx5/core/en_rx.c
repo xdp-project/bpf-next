@@ -181,11 +181,6 @@ static inline u32 mlx5e_decompress_cqes_start(struct mlx5e_rq *rq,
 	return mlx5e_decompress_cqes_cont(rq, wq, 1, budget_rem) - 1;
 }
 
-static inline struct page *mlx5e_page_alloc_mapped(struct mlx5e_rq *rq)
-{
-	return page_pool_dev_alloc_pages(rq->page_pool);
-}
-
 static inline void frag_set_page(struct mlx5e_wqe_frag_info *frag,
 				 struct page *p)
 {
@@ -211,7 +206,7 @@ static inline void mlx5e_get_rx_frag(struct mlx5e_rq *rq,
 		 * should just use the new one without replenishing again
 		 * by themselves.
 		 */
-		struct page *p = mlx5e_page_alloc_mapped(rq);
+		struct page *p = page_pool_dev_alloc_pages(rq->page_pool);
 
 		frag_set_page(frag, p);
 	}
@@ -396,7 +391,7 @@ static int mlx5e_alloc_rx_mpwqe(struct mlx5e_rq *rq, u16 ix)
 		       offsetof(struct mlx5e_umr_wqe, inline_mtts));
 
 	for (i = 0; i < MLX5_MPWRQ_PAGES_PER_WQE; i++) {
-		struct page *p = mlx5e_page_alloc_mapped(rq);
+		struct page *p = page_pool_dev_alloc_pages(rq->page_pool);
 
 		if (unlikely(!p))
 			goto err_unmap;
