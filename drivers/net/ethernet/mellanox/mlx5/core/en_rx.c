@@ -170,11 +170,6 @@ static inline struct page *mlx5e_page_alloc_mapped(struct mlx5e_rq *rq)
 	return page_pool_dev_alloc_pages(rq->page_pool);
 }
 
-void mlx5e_page_release(struct mlx5e_rq *rq, struct page *p)
-{
-	page_pool_recycle_direct(rq->page_pool, p);
-}
-
 static inline void frag_set_page(struct mlx5e_wqe_frag_info *frag,
 				 struct page *p)
 {
@@ -210,7 +205,7 @@ static inline void mlx5e_put_rx_frag(struct mlx5e_rq *rq,
 				     struct mlx5e_wqe_frag_info *frag)
 {
 	if (frag->last_in_page)
-		mlx5e_page_release(rq, frag_get_page(frag));
+		page_pool_recycle_direct(rq->page_pool, frag_get_page(frag));
 }
 
 static inline struct mlx5e_wqe_frag_info *get_frag(struct mlx5e_rq *rq, u16 ix)
@@ -339,7 +334,7 @@ mlx5e_free_rx_mpwqe(struct mlx5e_rq *rq, struct mlx5e_mpw_info *wi, bool recycle
 
 	for (i = 0; i < MLX5_MPWRQ_PAGES_PER_WQE; i++)
 		if (no_xdp_xmit || !test_bit(i, wi->xdp_xmit_bitmap))
-			mlx5e_page_release(rq, page_arr[i]);
+			page_pool_recycle_direct(rq->page_pool, page_arr[i]);
 }
 
 static void mlx5e_post_rx_mpwqe(struct mlx5e_rq *rq)
@@ -428,7 +423,7 @@ static int mlx5e_alloc_rx_mpwqe(struct mlx5e_rq *rq, u16 ix)
 
 err_unmap:
 	while (--i >= 0)
-		mlx5e_page_release(rq, page_arr[i]);
+		page_pool_recycle_direct(rq->page_pool, page_arr[i]);
 	rq->stats->buff_alloc_err++;
 
 	return -ENOMEM;
