@@ -65,6 +65,17 @@ struct page_pool_params {
 	enum dma_data_direction dma_dir; /* DMA mapping direction */
 };
 
+struct pp_page_info {
+	struct page *page;
+	dma_addr_t   dma_addr;
+};
+
+struct pp_page_info_db {
+	struct pp_page_info *list;
+	struct pp_page_info **freelist;
+	int len;
+};
+
 struct page_pool {
 	struct rcu_head rcu;
 	struct page_pool_params p;
@@ -96,6 +107,8 @@ struct page_pool {
 	 * TODO: Implement bulk return pages into this structure.
 	 */
 	struct ptr_ring ring;
+
+	struct pp_page_info_db pi_db;
 };
 
 struct page *page_pool_alloc_pages(struct page_pool *pool, gfp_t gfp);
@@ -141,8 +154,23 @@ static inline bool is_page_pool_compiled_in(void)
 #endif
 }
 
+/*static inline void page_pool_set_dma_addr(struct page *page, dma_addr_t dma_addr)
+{
+	((struct pp_page_info *)page_private(page))->dma_addr = dma_addr;
+}*/
+
+static inline void page_pool_set_pi(struct page *page, struct pp_page_info *pi)
+{
+	set_page_private(page, (unsigned long)pi);
+}
+
+static inline struct pp_page_info *page_pool_get_pi(struct page *page)
+{
+	return (struct pp_page_info *)page_private(page);
+}
+
 static inline dma_addr_t page_pool_get_dma_addr(struct page *page)
 {
-	return page_private(page);
+	return page_pool_get_pi(page)->dma_addr;
 }
 #endif /* _NET_PAGE_POOL_H */

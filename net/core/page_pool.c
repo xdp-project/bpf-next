@@ -14,10 +14,52 @@
 #include <linux/page-flags.h>
 #include <linux/mm.h> /* for __put_page() */
 
+static void page_pool_page_info_push(struct pp_page_info_db *db,
+				     struct pp_page_info *pi)
+{
+	db->freelist[db->len++] = pi;
+}
+
+static struct pp_page_info *page_pool_page_info_pop(struct pp_page_info_db *db)
+{
+	return db->freelist[--db->len];
+}
+
+static void page_pool_page_info_destroy(struct pp_page_info_db *pi)
+{
+	kvfree(pi->list);
+	kvfree(pi->freelist);
+}
+
+static int page_pool_page_info_create(struct pp_page_info_db *db,
+				      unsigned int pool_size,
+				      int nid)
+{
+	int i;
+
+	db->list = kvzalloc_node(array_size(pool_size, sizeof(*db->list)),
+				 GFP_KERNEL, nid);
+	db->freelist = kvzalloc_node(array_size(pool_size, sizeof(*db->freelist)),
+				     GFP_KERNEL, nid);
+
+	if (!db->list || !db->freelist) {
+		kvfree(db->list);
+		kvfree(db->freelist);
+		return -ENOMEM;
+	}
+
+	db->len = 0;
+	for (i = 0; i < pool_size; i++)
+		page_pool_page_info_push(db, db->list + i);
+
+	return 0;
+}
+
 static int page_pool_init(struct page_pool *pool,
 			  const struct page_pool_params *params)
 {
 	unsigned int ring_qsize = 1024; /* Default */
+	int err;
 
 	memcpy(&pool->p, params, sizeof(pool->p));
 
@@ -42,6 +84,10 @@ static int page_pool_init(struct page_pool *pool,
 
 	if (ptr_ring_init(&pool->ring, ring_qsize, GFP_KERNEL) < 0)
 		return -ENOMEM;
+
+	err = page_pool_page_info_create(&pool->pi_db, ring_qsize, pool->p.nid);
+	if (err)
+		return err;
 
 	return 0;
 }
@@ -111,6 +157,7 @@ noinline
 static struct page *__page_pool_alloc_pages_slow(struct page_pool *pool,
 						 gfp_t _gfp)
 {
+	struct pp_page_info *pi;
 	struct page *page;
 	gfp_t gfp = _gfp;
 	dma_addr_t dma;
@@ -133,6 +180,9 @@ static struct page *__page_pool_alloc_pages_slow(struct page_pool *pool,
 	if (!page)
 		return NULL;
 
+	pi = page_pool_page_info_pop(&pool->pi_db);
+	pi->page = page;
+
 	if (!(pool->p.flags & PP_FLAG_DMA_MAP))
 		goto skip_dma_map;
 
@@ -146,10 +196,11 @@ static struct page *__page_pool_alloc_pages_slow(struct page_pool *pool,
 		put_page(page);
 		return NULL;
 	}
-	set_page_private(page, dma); /* page->private = dma; */
+	pi->dma_addr = dma;
 
 skip_dma_map:
 	/* When page just alloc'ed is should/must have refcnt 1. */
+	page_pool_set_pi(page, pi);
 	return page;
 }
 
@@ -176,12 +227,15 @@ static void __page_pool_clean_page(struct page_pool *pool,
 				   struct page *page)
 {
 	if (!(pool->p.flags & PP_FLAG_DMA_MAP))
-		return;
+		goto out;
 
 	/* DMA unmap */
-	dma_unmap_page(pool->p.dev, page_private(page),
+	dma_unmap_page(pool->p.dev, page_pool_get_dma_addr(page),
 		       PAGE_SIZE << pool->p.order, pool->p.dma_dir);
-	set_page_private(page, 0);
+
+out:
+	page_pool_page_info_push(&pool->pi_db, page_pool_get_pi(page));
+	page_pool_set_pi(page, NULL);
 }
 
 /* Return a page to the page allocator, cleaning up our state */
@@ -289,6 +343,7 @@ static void __page_pool_destroy_rcu(struct rcu_head *rcu)
 
 	__page_pool_empty_ring(pool);
 	ptr_ring_cleanup(&pool->ring, NULL);
+	page_pool_page_info_destroy(&pool->pi_db);
 	kfree(pool);
 }
 
