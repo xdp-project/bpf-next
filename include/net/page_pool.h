@@ -60,6 +60,8 @@ struct page_pool_params {
 	unsigned int	flags;
 	unsigned int	order;
 	unsigned int	pool_size;
+	u16             elevation;
+	u16             elev_thld;
 	int		nid;  /* Numa node id to allocate from pages from */
 	struct device	*dev; /* device, for DMA pre-mapping purposes */
 	enum dma_data_direction dma_dir; /* DMA mapping direction */
@@ -68,6 +70,7 @@ struct page_pool_params {
 struct pp_page_info {
 	struct page *page;
 	dma_addr_t   dma_addr;
+	u16          refcnt_bias;
 };
 
 struct pp_page_info_db {
@@ -172,5 +175,20 @@ static inline struct pp_page_info *page_pool_get_pi(struct page *page)
 static inline dma_addr_t page_pool_get_dma_addr(struct page *page)
 {
 	return page_pool_get_pi(page)->dma_addr;
+}
+
+static inline u16 page_pool_get_refcnt_bias(struct page *page)
+{
+	return page_pool_get_pi(page)->refcnt_bias;
+}
+
+static inline void page_pool_refcnt_bias_inc(struct page *page)
+{
+	page_pool_get_pi(page)->refcnt_bias++;
+}
+
+static inline void page_pool_refcnt_bias_dec(struct page *page)
+{
+	page_pool_get_pi(page)->refcnt_bias--;
 }
 #endif /* _NET_PAGE_POOL_H */

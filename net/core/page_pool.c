@@ -183,6 +183,11 @@ static struct page *__page_pool_alloc_pages_slow(struct page_pool *pool,
 	pi = page_pool_page_info_pop(&pool->pi_db);
 	pi->page = page;
 
+	if (pool->p.elevation) {
+		page_ref_add(page, pool->p.elevation);
+		pi->refcnt_bias = pool->p.elevation;
+	}
+
 	if (!(pool->p.flags & PP_FLAG_DMA_MAP))
 		goto skip_dma_map;
 
@@ -226,15 +231,18 @@ EXPORT_SYMBOL(page_pool_alloc_pages);
 static void __page_pool_clean_page(struct page_pool *pool,
 				   struct page *page)
 {
+	struct pp_page_info *pi = page_pool_get_pi(page);
+
 	if (!(pool->p.flags & PP_FLAG_DMA_MAP))
 		goto out;
 
 	/* DMA unmap */
-	dma_unmap_page(pool->p.dev, page_pool_get_dma_addr(page),
+	dma_unmap_page(pool->p.dev, pi->dma_addr,
 		       PAGE_SIZE << pool->p.order, pool->p.dma_dir);
 
 out:
-	page_pool_page_info_push(&pool->pi_db, page_pool_get_pi(page));
+	page_ref_sub(page, pi->refcnt_bias);
+	page_pool_page_info_push(&pool->pi_db, pi);
 	page_pool_set_pi(page, NULL);
 }
 
@@ -287,7 +295,7 @@ void __page_pool_put_page(struct page_pool *pool,
 	 *
 	 * refcnt == 1 means page_pool owns page, and can recycle it.
 	 */
-	if (likely(page_ref_count(page) == 1)) {
+	if (likely(page_ref_count(page) - page_pool_get_refcnt_bias(page) == 1)) {
 		/* Read barrier done in page_ref_count / READ_ONCE */
 
 		if (allow_direct && in_serving_softirq())
