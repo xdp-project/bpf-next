@@ -34,6 +34,7 @@
 #include <linux/skbuff.h>
 #include <net/hwbm.h>
 #include "mvneta_bm.h"
+#include <net/page_pool.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/tso.h>
@@ -624,6 +625,9 @@ struct mvneta_rx_queue {
 	/* pointer to uncomplete skb buffer */
 	struct sk_buff *skb;
 	int left_size;
+
+	/* page pool */
+	struct page_pool *page_pool;
 
 	/* error counters */
 	u32 skb_alloc_err;
@@ -1814,17 +1818,11 @@ static int mvneta_rx_refill(struct mvneta_port *pp,
 	dma_addr_t phys_addr;
 	struct page *page;
 
-	page = __dev_alloc_page(gfp_mask);
+	page = page_pool_dev_alloc_pages(rxq->page_pool);
 	if (!page)
 		return -ENOMEM;
 
-	/* map page for use */
-	phys_addr = dma_map_page(pp->dev->dev.parent, page, 0, PAGE_SIZE,
-				 DMA_FROM_DEVICE);
-	if (unlikely(dma_mapping_error(pp->dev->dev.parent, phys_addr))) {
-		__free_page(page);
-		return -ENOMEM;
-	}
+	phys_addr = page_pool_get_dma_addr(page);
 
 	phys_addr += pp->rx_offset_correction;
 	mvneta_rx_desc_fill(rx_desc, phys_addr, page, rxq);
@@ -1893,10 +1891,11 @@ static void mvneta_rxq_drop_pkts(struct mvneta_port *pp,
 		if (!data || !(rx_desc->buf_phys_addr))
 			continue;
 
-		dma_unmap_page(pp->dev->dev.parent, rx_desc->buf_phys_addr,
-			       PAGE_SIZE, DMA_FROM_DEVICE);
-		__free_page(data);
+		page_pool_put_page(rxq->page_pool, data, false);
 	}
+
+	if (rxq->page_pool)
+		page_pool_destroy(rxq->page_pool);
 }
 
 static inline
@@ -2011,8 +2010,7 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 				skb_add_rx_frag(rxq->skb, frag_num, page,
 						frag_offset, frag_size,
 						PAGE_SIZE);
-				dma_unmap_page(dev->dev.parent, phys_addr,
-					       PAGE_SIZE, DMA_FROM_DEVICE);
+				page_pool_unmap_page(rxq->page_pool, page);
 				rxq->left_size -= frag_size;
 			}
 		} else {
@@ -2042,8 +2040,7 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 						frag_offset, frag_size,
 						PAGE_SIZE);
 
-				dma_unmap_page(dev->dev.parent, phys_addr,
-					       PAGE_SIZE, DMA_FROM_DEVICE);
+				page_pool_unmap_page(rxq->page_pool, page);
 
 				rxq->left_size -= frag_size;
 			}
@@ -2829,11 +2826,37 @@ static int mvneta_poll(struct napi_struct *napi, int budget)
 	return rx_done;
 }
 
+static int mvneta_create_page_pool(struct mvneta_port *pp,
+				   struct mvneta_rx_queue *rxq, int num)
+{
+	struct page_pool_params pp_params = { 0 };
+	int err = 0;
+
+	pp_params.order = 0;
+	/* internal DMA mapping in page_pool */
+	pp_params.flags = PP_FLAG_DMA_MAP;
+	pp_params.pool_size = num;
+	pp_params.nid = NUMA_NO_NODE;
+	pp_params.dev = pp->dev->dev.parent;
+	pp_params.dma_dir = DMA_FROM_DEVICE;
+
+	rxq->page_pool = page_pool_create(&pp_params);
+	if (IS_ERR(rxq->page_pool)) {
+		err = PTR_ERR(rxq->page_pool);
+		rxq->page_pool = NULL;
+	}
+
+	return err;
+}
+
 /* Handle rxq fill: allocates rxq skbs; called when initializing a port */
 static int mvneta_rxq_fill(struct mvneta_port *pp, struct mvneta_rx_queue *rxq,
 			   int num)
 {
-	int i;
+	int i = 0;
+
+	if (mvneta_create_page_pool(pp, rxq, num))
+		goto out;
 
 	for (i = 0; i < num; i++) {
 		memset(rxq->descs + i, 0, sizeof(struct mvneta_rx_desc));
@@ -2849,6 +2872,7 @@ static int mvneta_rxq_fill(struct mvneta_port *pp, struct mvneta_rx_queue *rxq,
 	/* Add this number of RX descriptors as non occupied (ready to
 	 * get packets)
 	 */
+out:
 	mvneta_rxq_non_occup_desc_add(pp, rxq, i);
 
 	return i;
