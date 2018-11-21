@@ -111,6 +111,8 @@ struct page_pool *page_pool_create(const struct page_pool_params *params);
 
 void page_pool_destroy(struct page_pool *pool);
 
+void page_pool_unmap_page(struct page_pool *pool, struct page *page);
+
 /* Never call this directly, use helpers below */
 void __page_pool_put_page(struct page_pool *pool,
 			  struct page *page, bool allow_direct);
@@ -141,4 +143,8 @@ static inline bool is_page_pool_compiled_in(void)
 #endif
 }
 
+static inline dma_addr_t page_pool_get_dma_addr(struct page *page)
+{
+       return page_private(page);
+}
 #endif /* _NET_PAGE_POOL_H */
