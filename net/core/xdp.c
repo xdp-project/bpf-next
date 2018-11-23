@@ -379,6 +379,13 @@ void xdp_return_buff(struct xdp_buff *xdp)
 }
 EXPORT_SYMBOL_GPL(xdp_return_buff);
 
+void xdp_return_skb_page(void *data, struct xdp_mem_info *xdp_mem)
+{
+	__xdp_return(data, xdp_mem, false, 0);
+}
+EXPORT_SYMBOL(xdp_return_skb_page);
+
+
 int xdp_attachment_query(struct xdp_attachment_info *info,
 			 struct netdev_bpf *bpf)
 {
