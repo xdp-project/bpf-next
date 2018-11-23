@@ -70,6 +70,7 @@
 #include <net/checksum.h>
 #include <net/ip6_checksum.h>
 #include <net/xfrm.h>
+#include <net/page_pool.h>
 
 #include <linux/uaccess.h>
 #include <trace/events/skb.h>
@@ -228,6 +229,7 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	skb->end = skb->tail + size;
 	skb->mac_header = (typeof(skb->mac_header))~0U;
 	skb->transport_header = (typeof(skb->transport_header))~0U;
+	skb->page_pool = NULL;
 
 	/* make sure we initialize shinfo sequentially */
 	shinfo = skb_shinfo(skb);
@@ -543,6 +545,12 @@ static void skb_clone_fraglist(struct sk_buff *skb)
 static void skb_free_head(struct sk_buff *skb)
 {
 	unsigned char *head = skb->head;
+
+	if (skb->page_pool) {
+		page_pool_put_page(skb->page_pool, virt_to_head_page(head),
+				   true);
+		return;
+	}
 
 	if (skb->head_frag)
 		skb_free_frag(head);
