@@ -746,6 +746,7 @@ struct sk_buff {
 #ifdef CONFIG_SKB_EXTENSIONS
 	__u8			active_extensions;
 #endif
+
 	/* fields enclosed in headers_start/headers_end are copied
 	 * using a single memcpy() in __copy_skb_header()
 	 */
@@ -2834,10 +2835,17 @@ static inline void skb_frag_ref(struct sk_buff *skb, int f)
  * @frag: the paged fragment
  *
  * Releases a reference on the paged fragment @frag.
+ * or recylcles the page via the page_pool API
  */
 static inline void __skb_frag_unref(skb_frag_t *frag)
 {
-	put_page(skb_frag_page(frag));
+	struct page *page;
+
+	page = skb_frag_page(frag);
+	if (page->mem_info.type ==  MEM_TYPE_PAGE_POOL)
+		xdp_return_skb_page(page_address(page), &page->mem_info);
+	else
+		put_page(page);
 }
 
 /**
