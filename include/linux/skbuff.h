@@ -40,6 +40,7 @@
 #include <linux/in6.h>
 #include <linux/if_packet.h>
 #include <net/flow.h>
+#include <net/xdp.h>
 
 /* The interface for checksum offload between the stack and networking drivers
  * is as follows...
@@ -827,7 +828,6 @@ struct sk_buff {
 #ifdef CONFIG_NETWORK_SECMARK
 	__u32		secmark;
 #endif
-
 	union {
 		__u32		mark;
 		__u32		reserved_tailroom;
@@ -846,6 +846,13 @@ struct sk_buff {
 	__u16			transport_header;
 	__u16			network_header;
 	__u16			mac_header;
+	/* TODO: What happens to the mem_info during SKB-cloning?!?
+	 * As mentioned above:
+	 *
+	 * fields enclosed in headers_start/headers_end are copied
+	 * using a single memcpy() in __copy_skb_header()
+	 */
+	struct xdp_mem_info	mem_info;
 
 	/* private: */
 	__u32			headers_end[0];
