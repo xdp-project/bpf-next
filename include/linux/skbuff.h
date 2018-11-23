@@ -40,6 +40,7 @@
 #include <linux/in6.h>
 #include <linux/if_packet.h>
 #include <net/flow.h>
+#include <net/xdp.h>
 
 /* The interface for checksum offload between the stack and networking drivers
  * is as follows...
@@ -746,6 +747,11 @@ struct sk_buff {
 #ifdef CONFIG_SKB_EXTENSIONS
 	__u8			active_extensions;
 #endif
+	/* TODO: Future idea, extend mem_info with __u8 flags, and
+	 * move bits head_frag and pfmemalloc there.
+	 */
+	struct xdp_mem_info	mem_info;
+
 	/* fields enclosed in headers_start/headers_end are copied
 	 * using a single memcpy() in __copy_skb_header()
 	 */

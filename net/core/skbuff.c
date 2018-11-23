@@ -70,6 +70,7 @@
 #include <net/checksum.h>
 #include <net/ip6_checksum.h>
 #include <net/xfrm.h>
+#include <net/page_pool.h>
 
 #include <linux/uaccess.h>
 #include <trace/events/skb.h>
@@ -547,6 +548,11 @@ static void skb_free_head(struct sk_buff *skb)
 {
 	unsigned char *head = skb->head;
 
+	if (skb->mem_info.type == MEM_TYPE_PAGE_POOL) {
+		xdp_return_skb_page(head, &skb->mem_info);
+		return;
+	}
+
 	if (skb->head_frag)
 		skb_free_frag(head);
 	else
@@ -857,6 +863,7 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
 	n->nohdr = 0;
 	n->peeked = 0;
 	C(pfmemalloc);
+	C(mem_info);
 	n->destructor = NULL;
 	C(tail);
 	C(end);
