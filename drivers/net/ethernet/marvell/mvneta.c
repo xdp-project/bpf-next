@@ -31,6 +31,8 @@
 #include <linux/phylink.h>
 #include <linux/platform_device.h>
 #include <linux/skbuff.h>
+#include <linux/bpf.h>
+#include <linux/bpf_trace.h>
 #include <net/hwbm.h>
 #include "mvneta_bm.h"
 #include <net/page_pool.h>
@@ -266,6 +268,13 @@
 #define MVNETA_RX_COAL_PKTS		32
 #define MVNETA_RX_COAL_USEC		100
 
+/* XDP */
+#define MVNETA_XDP_PASS          0
+#define MVNETA_XDP_CONSUMED      BIT(0)
+#define MVNETA_XDP_TX            BIT(1)
+#define MVNETA_XDP_REDIR         BIT(2)
+#define MVNETA_XDP_RX_OK (MVNETA_XDP_PASS | MVNETA_XDP_TX | MVNETA_XDP_REDIR)
+
 /* The two bytes Marvell header. Either contains a special value used
  * by Marvell switches when a specific hardware mode is enabled (not
  * supported by this driver) or is filled automatically by zeroes on
@@ -451,6 +460,8 @@ struct mvneta_port {
 	u64 ethtool_stats[ARRAY_SIZE(mvneta_statistics)];
 
 	u32 indir[MVNETA_RSS_LU_TABLE_SIZE];
+
+	struct bpf_prog *xdp_prog;
 
 	/* Flags for special SoC configurations */
 	bool neta_armada3700;
@@ -1927,13 +1938,73 @@ int mvneta_rx_refill_queue(struct mvneta_port *pp, struct mvneta_rx_queue *rxq)
 	return i;
 }
 
+static u32 mvneta_run_xdp(struct mvneta_port *pp, struct bpf_prog *prog,
+			  struct xdp_buff *xdp)
+{
+	u32 ret = MVNETA_XDP_PASS;
+	int err;
+	u32 act;
+
+	rcu_read_lock();
+	act = bpf_prog_run_xdp(prog, xdp);
+
+	switch (act) {
+	case XDP_PASS:
+		ret = MVNETA_XDP_PASS;
+		break;
+#if 0
+	case XDP_TX:
+		ret = mvneta_xdp_xmit_back(priv, xdp);
+		if (ret != MVNETA_XDP_TX)
+			xdp_return_buff(xdp);
+		break;
+#endif
+	case XDP_REDIRECT:
+		err = xdp_do_redirect(pp->dev, xdp, prog);
+		if (!err) {
+			ret = MVNETA_XDP_REDIR;
+		} else {
+			ret = MVNETA_XDP_CONSUMED;
+			xdp_return_buff(xdp);
+		}
+		break;
+	default:
+		bpf_warn_invalid_xdp_action(act);
+		/* fall through */
+	case XDP_ABORTED:
+		trace_xdp_exception(pp->dev, prog, act);
+		/* fall through -- handle aborts by dropping packet */
+	case XDP_DROP:
+		ret = MVNETA_XDP_CONSUMED;
+		xdp_return_buff(xdp);
+		break;
+	}
+
+	rcu_read_unlock();
+
+	return ret;
+}
+
+static void mvneta_finalize_xdp_rx(u32 xdp_res)
+{
+	if (xdp_res & MVNETA_XDP_REDIR)
+		xdp_do_flush_map();
+
+	/* if (xdp_res & MVNETA_XDP_TX)
+	 * FIXME Ring DB and send packets
+	 */
+}
+
 /* Main rx processing when using software buffer management */
 static int mvneta_rx_swbm(struct napi_struct *napi,
 			  struct mvneta_port *pp, int budget,
 			  struct mvneta_rx_queue *rxq)
 {
+	struct bpf_prog *xdp_prog = READ_ONCE(pp->xdp_prog);
 	struct net_device *dev = pp->dev;
 	int rx_todo, rx_proc;
+	u16 xdp_xmit = 0;
+	u32 xdp_act = 0;
 	int refill = 0;
 	u32 rcvd_pkts = 0;
 	u32 rcvd_bytes = 0;
@@ -1945,6 +2016,8 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 	/* Fairness NAPI loop */
 	while ((rcvd_pkts < budget) && (rx_proc < rx_todo)) {
 		struct mvneta_rx_desc *rx_desc = mvneta_rxq_next_desc_get(rxq);
+		u32 xdp_result = XDP_PASS;
+		struct xdp_buff xdp;
 		unsigned char *data;
 		struct page *page;
 		dma_addr_t phys_addr;
@@ -1955,8 +2028,6 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 		index = rx_desc - rxq->descs;
 		page = (struct page *)rxq->buf_virt_addr[index];
 		data = page_address(page);
-		/* Prefetch header */
-		prefetch(data);
 
 		phys_addr = rx_desc->buf_phys_addr;
 		rx_status = rx_desc->status;
@@ -1979,11 +2050,28 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 						      phys_addr, 0,
 						      rx_bytes,
 						      DMA_FROM_DEVICE);
+			/* Prefetch header */
+			prefetch(data);
 
 			rx_desc->buf_phys_addr = 0;
+			xdp.data_hard_start = data;
+			xdp.data = data + XDP_PACKET_HEADROOM;
+			xdp_set_data_meta_invalid(&xdp);
+			xdp.data_end = xdp.data + rx_bytes;
+			xdp.rxq = &rxq->xdp_rxq;
+
+			if (xdp_prog) {
+				xdp_result = mvneta_run_xdp(pp, xdp_prog, &xdp);
+				if (xdp_result != MVNETA_XDP_PASS) {
+					xdp_act |= xdp_result;
+					if (xdp_result == MVNETA_XDP_TX)
+						xdp_xmit++;
+					continue;
+				}
+			}
 
 			frag_num = 0;
-			rxq->skb = build_skb(data, PAGE_SIZE);
+			rxq->skb = build_skb(xdp.data_hard_start, PAGE_SIZE);
 			if (!rxq->skb)
 				break;
 			rxq->skb->mem_info = rxq->xdp_rxq.mem;
@@ -2059,6 +2147,7 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 		u64_stats_update_end(&stats->syncp);
 	}
 
+	mvneta_finalize_xdp_rx(xdp_act);
 	/* return some buffers to hardware queue, one at a time is too slow */
 	refill = mvneta_rx_refill_queue(pp, rxq);
 
@@ -2808,6 +2897,7 @@ static int mvneta_poll(struct napi_struct *napi, int budget)
 static int mvneta_create_page_pool(struct mvneta_port *pp,
 				   struct mvneta_rx_queue *rxq, int num)
 {
+	struct bpf_prog *xdp_prog = READ_ONCE(pp->xdp_prog);
 	struct page_pool_params pp_params = { 0 };
 	int err = 0;
 
@@ -2818,7 +2908,7 @@ static int mvneta_create_page_pool(struct mvneta_port *pp,
 	pp_params.pool_size = num;
 	pp_params.nid = NUMA_NO_NODE;
 	pp_params.dev = pp->dev->dev.parent;
-	pp_params.dma_dir = DMA_FROM_DEVICE;
+	pp_params.dma_dir = xdp_prog ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE;
 
 	rxq->page_pool = page_pool_create(&pp_params);
 	if (IS_ERR(rxq->page_pool)) {
@@ -4291,6 +4381,47 @@ static int mvneta_ethtool_set_eee(struct net_device *dev,
 	return phylink_ethtool_set_eee(pp->phylink, eee);
 }
 
+static int mvneta_xdp_setup(struct mvneta_port *pp, struct bpf_prog *prog,
+			    struct netlink_ext_ack *extack)
+{
+	struct net_device *dev = pp->dev;
+	struct bpf_prog *old_prog;
+
+	/* For now just support only the usual MTU sized frames */
+	if (prog && dev->mtu > 1500) {
+		NL_SET_ERR_MSG_MOD(extack, "Jumbo frames not supported on XDP");
+		return -EOPNOTSUPP;
+	}
+
+	if (netif_running(dev))
+		mvneta_stop(dev);
+
+	/* Detach old prog, if any */
+	old_prog = xchg(&pp->xdp_prog, prog);
+	if (old_prog)
+		bpf_prog_put(old_prog);
+
+	if (netif_running(dev))
+		mvneta_open(dev);
+
+	return 0;
+}
+
+static int mvneta_xdp(struct net_device *dev, struct netdev_bpf *xdp)
+{
+	struct mvneta_port *pp = netdev_priv(dev);
+
+	switch (xdp->command) {
+	case XDP_SETUP_PROG:
+		return mvneta_xdp_setup(pp, xdp->prog, xdp->extack);
+	case XDP_QUERY_PROG:
+		xdp->prog_id = pp->xdp_prog ? pp->xdp_prog->aux->id : 0;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
 static const struct net_device_ops mvneta_netdev_ops = {
 	.ndo_open            = mvneta_open,
 	.ndo_stop            = mvneta_stop,
@@ -4301,6 +4432,7 @@ static const struct net_device_ops mvneta_netdev_ops = {
 	.ndo_fix_features    = mvneta_fix_features,
 	.ndo_get_stats64     = mvneta_get_stats64,
 	.ndo_do_ioctl        = mvneta_ioctl,
+	.ndo_bpf             = mvneta_xdp,
 };
 
 static const struct ethtool_ops mvneta_eth_tool_ops = {
