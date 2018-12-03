@@ -2050,8 +2050,6 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 						      phys_addr, 0,
 						      rx_bytes,
 						      DMA_FROM_DEVICE);
-			/* Prefetch header */
-			prefetch(data);
 
 			rx_desc->buf_phys_addr = 0;
 			xdp.data_hard_start = data;
