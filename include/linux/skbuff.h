@@ -745,6 +745,10 @@ struct sk_buff {
 				head_frag:1,
 				xmit_more:1,
 				pfmemalloc:1;
+	/* TODO: Future idea, extend mem_info with __u8 flags, and
+	 * move bits head_frag and pfmemalloc there.
+	 */
+	struct xdp_mem_info	mem_info;
 
 	/* fields enclosed in headers_start/headers_end are copied
 	 * using a single memcpy() in __copy_skb_header()
@@ -846,13 +850,6 @@ struct sk_buff {
 	__u16			transport_header;
 	__u16			network_header;
 	__u16			mac_header;
-	/* TODO: What happens to the mem_info during SKB-cloning?!?
-	 * As mentioned above:
-	 *
-	 * fields enclosed in headers_start/headers_end are copied
-	 * using a single memcpy() in __copy_skb_header()
-	 */
-	struct xdp_mem_info	mem_info;
 
 	/* private: */
 	__u32			headers_end[0];
