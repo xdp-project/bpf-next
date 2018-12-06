@@ -1835,7 +1835,7 @@ static int mvneta_rx_refill(struct mvneta_port *pp,
 		return -ENOMEM;
 
 	phys_addr = page_pool_get_dma_addr(page);
-
+// XXX offset setting
 	phys_addr += pp->rx_offset_correction + NET_SKB_PAD;
 	mvneta_rx_desc_fill(rx_desc, phys_addr, page, rxq);
 	return 0;
@@ -2053,7 +2053,8 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 
 			rx_desc->buf_phys_addr = 0;
 			xdp.data_hard_start = data;
-			xdp.data = data + XDP_PACKET_HEADROOM;
+			//xdp.data = data + XDP_PACKET_HEADROOM;
+			xdp.data = data + MVNETA_MH_SIZE + NET_SKB_PAD;
 			xdp_set_data_meta_invalid(&xdp);
 			xdp.data_end = xdp.data + rx_bytes;
 			xdp.rxq = &rxq->xdp_rxq;
@@ -3371,7 +3372,8 @@ static int mvneta_change_mtu(struct net_device *dev, int mtu)
 		mvneta_bm_update_mtu(pp, mtu);
 
 	pp->pkt_size = MVNETA_RX_PKT_SIZE(dev->mtu);
-
+	netdev_info(dev, "pp->pkt_size=MVNETA_RX_PKT_SIZE(dev->mtu:%d) = %u\n",
+		    dev->mtu, MVNETA_RX_PKT_SIZE(dev->mtu));
 	ret = mvneta_setup_rxqs(pp);
 	if (ret) {
 		netdev_err(dev, "unable to setup rxqs after MTU change\n");
