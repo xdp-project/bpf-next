@@ -629,6 +629,9 @@ struct mvneta_rx_queue {
 	/* page pool */
 	struct page_pool *page_pool;
 
+	/* XDP */
+	struct xdp_rxq_info xdp_rxq;
+
 	/* error counters */
 	u32 skb_alloc_err;
 	u32 refill_err;
@@ -1893,6 +1896,9 @@ static void mvneta_rxq_drop_pkts(struct mvneta_port *pp,
 		page_pool_put_page(rxq->page_pool, data, false);
 	}
 
+	if (xdp_rxq_info_is_reg(&rxq->xdp_rxq))
+		xdp_rxq_info_unreg(&rxq->xdp_rxq);
+
 	if (rxq->page_pool)
 		page_pool_destroy(rxq->page_pool);
 }
@@ -1983,10 +1989,10 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 
 			rx_desc->buf_phys_addr = 0;
 			frag_num = 0;
+			page_pool_store_mem_info(page, &rxq->xdp_rxq.mem);
 			skb_reserve(rxq->skb, MVNETA_MH_SIZE + NET_SKB_PAD);
 			skb_put(rxq->skb, psize);
 			mvneta_rx_csum(pp, rx_status, rxq->skb);
-			page_pool_unmap_page(rxq->page_pool, page);
 			rxq->left_size = rx_bytes - psize;
 		} else {
 			/* Middle or Last descriptor */
@@ -1999,11 +2005,15 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 				/* refill descriptor with new buffer later */
 				rx_desc->buf_phys_addr = 0;
 
-				page_pool_unmap_page(rxq->page_pool, page);
-
 				frag_num = skb_shinfo(rxq->skb)->nr_frags;
 				frag_size = min(rxq->left_size, (int)PAGE_SIZE -
 						(int)MVNETA_PAD);
+				dma_sync_single_range_for_cpu(dev->dev.parent,
+							      phys_addr, 0,
+							      frag_size,
+							      DMA_FROM_DEVICE);
+				page_pool_store_mem_info(page, &rxq->xdp_rxq.mem);
+
 				skb_add_rx_frag(rxq->skb, frag_num, page,
 						NET_SKB_PAD, frag_size,
 						PAGE_SIZE);
@@ -2819,10 +2829,25 @@ static int mvneta_create_page_pool(struct mvneta_port *pp,
 static int mvneta_rxq_fill(struct mvneta_port *pp, struct mvneta_rx_queue *rxq,
 			   int num)
 {
-	int i = 0;
+	int err, i = 0;
 
-	if (mvneta_create_page_pool(pp, rxq, num))
+	err = mvneta_create_page_pool(pp, rxq, num);
+	if (err)
 		goto out;
+
+	err = xdp_rxq_info_reg(&rxq->xdp_rxq, pp->dev, rxq->id);
+	if (err) {
+		page_pool_destroy(rxq->page_pool);
+		goto out;
+	}
+
+	err = xdp_rxq_info_reg_mem_model(&rxq->xdp_rxq, MEM_TYPE_PAGE_POOL,
+					 rxq->page_pool);
+	if (err) {
+		xdp_rxq_info_unreg(&rxq->xdp_rxq);
+		page_pool_destroy(rxq->page_pool);
+		goto out;
+	}
 
 	for (i = 0; i < num; i++) {
 		memset(rxq->descs + i, 0, sizeof(struct mvneta_rx_desc));
