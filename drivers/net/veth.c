@@ -555,6 +555,7 @@ static struct sk_buff *veth_xdp_rcv_one(struct veth_rq *rq,
 		goto err;
 	}
 
+	skb->mem_info = frame->mem;
 	xdp_scrub_frame(frame);
 	skb->protocol = eth_type_trans(skb, rq->dev);
 err:
