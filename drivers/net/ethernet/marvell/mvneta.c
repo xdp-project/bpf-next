@@ -627,6 +627,9 @@ struct mvneta_rx_queue {
 	/* page pool */
 	struct page_pool *page_pool;
 
+	/* XDP */
+	struct xdp_rxq_info xdp_rxq;
+
 	/* error counters */
 	u32 skb_alloc_err;
 	u32 refill_err;
@@ -1891,6 +1894,9 @@ static void mvneta_rxq_drop_pkts(struct mvneta_port *pp,
 		page_pool_put_page(rxq->page_pool, data, false);
 	}
 
+	if (xdp_rxq_info_is_reg(&rxq->xdp_rxq))
+		xdp_rxq_info_unreg(&rxq->xdp_rxq);
+
 	if (rxq->page_pool)
 		page_pool_destroy(rxq->page_pool);
 }
@@ -1977,11 +1983,11 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 
 			rx_desc->buf_phys_addr = 0;
 			frag_num = 0;
+			rxq->skb->mem_info = rxq->xdp_rxq.mem;
 			skb_reserve(rxq->skb, MVNETA_MH_SIZE + NET_SKB_PAD);
 			skb_put(rxq->skb, rx_bytes < PAGE_SIZE ? rx_bytes :
 				PAGE_SIZE);
 			mvneta_rx_csum(pp, rx_status, rxq->skb);
-			page_pool_unmap_page(rxq->page_pool, page);
 			rxq->left_size = rx_bytes < PAGE_SIZE ? 0 : rx_bytes -
 				PAGE_SIZE;
 		} else {
@@ -2000,7 +2006,7 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 				skb_add_rx_frag(rxq->skb, frag_num, page,
 						0, frag_size,
 						PAGE_SIZE);
-
+				/* skb frags[] are not recycled, unmap now */
 				page_pool_unmap_page(rxq->page_pool, page);
 
 				rxq->left_size -= frag_size;
@@ -2814,10 +2820,25 @@ static int mvneta_create_page_pool(struct mvneta_port *pp,
 static int mvneta_rxq_fill(struct mvneta_port *pp, struct mvneta_rx_queue *rxq,
 			   int num)
 {
-	int i = 0;
+	int err, i = 0;
 
-	if (mvneta_create_page_pool(pp, rxq, num))
+	err = mvneta_create_page_pool(pp, rxq, num);
+	if (err)
 		goto out;
+
+	err = xdp_rxq_info_reg(&rxq->xdp_rxq, pp->dev, rxq->id);
+	if (err) {
+		page_pool_destroy(rxq->page_pool);
+		goto out;
+	}
+
+	err = xdp_rxq_info_reg_mem_model(&rxq->xdp_rxq, MEM_TYPE_PAGE_POOL,
+					 rxq->page_pool);
+	if (err) {
+		xdp_rxq_info_unreg(&rxq->xdp_rxq);
+		page_pool_destroy(rxq->page_pool);
+		goto out;
+	}
 
 	for (i = 0; i < num; i++) {
 		memset(rxq->descs + i, 0, sizeof(struct mvneta_rx_desc));
