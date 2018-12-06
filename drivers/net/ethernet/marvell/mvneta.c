@@ -330,6 +330,8 @@
 #define MVNETA_RX_GET_BM_POOL_ID(rxd) \
 	(((rxd)->status & MVNETA_RXD_BM_POOL_MASK) >> MVNETA_RXD_BM_POOL_SHIFT)
 
+#define MVNETA_PAD SKB_DATA_ALIGN(sizeof(struct skb_shared_info) + NET_SKB_PAD)
+#define MVNETA_SKB_SZ(len) (SKB_DATA_ALIGN(len) + MVNETA_PAD)
 enum {
 	ETHTOOL_STAT_EEE_WAKEUP,
 	ETHTOOL_STAT_SKB_ALLOC_ERR,
@@ -644,7 +646,6 @@ static int txq_number = 8;
 static int rxq_def;
 
 static int rx_copybreak __read_mostly = 256;
-static int rx_header_size __read_mostly = 128;
 
 /* HW BM need that each port be identify by a unique ID */
 static int global_port_id;
@@ -1824,7 +1825,7 @@ static int mvneta_rx_refill(struct mvneta_port *pp,
 
 	phys_addr = page_pool_get_dma_addr(page);
 
-	phys_addr += pp->rx_offset_correction;
+	phys_addr += pp->rx_offset_correction + NET_SKB_PAD;
 	mvneta_rx_desc_fill(rx_desc, phys_addr, page, rxq);
 	return 0;
 }
@@ -1945,14 +1946,12 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 		struct page *page;
 		dma_addr_t phys_addr;
 		u32 rx_status, index;
-		int rx_bytes, skb_size, copy_size;
-		int frag_num, frag_size, frag_offset;
+		int frag_num, frag_size;
+		int rx_bytes, psize;
 
 		index = rx_desc - rxq->descs;
 		page = (struct page *)rxq->buf_virt_addr[index];
 		data = page_address(page);
-		/* Prefetch header */
-		prefetch(data);
 
 		phys_addr = rx_desc->buf_phys_addr;
 		rx_status = rx_desc->status;
@@ -1970,49 +1969,27 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 			rx_bytes = rx_desc->data_size -
 				   (ETH_FCS_LEN + MVNETA_MH_SIZE);
 
-			/* Allocate small skb for each new packet */
-			skb_size = max(rx_copybreak, rx_header_size);
-			rxq->skb = netdev_alloc_skb_ip_align(dev, skb_size);
-			if (unlikely(!rxq->skb)) {
-				netdev_err(dev,
-					   "Can't allocate skb on queue %d\n",
-					   rxq->id);
-				dev->stats.rx_dropped++;
-				rxq->skb_alloc_err++;
-				continue;
-			}
-			copy_size = min(skb_size, rx_bytes);
+			psize = rx_bytes;
 
-			/* Copy data from buffer to SKB, skip Marvell header */
-			memcpy(rxq->skb->data, data + MVNETA_MH_SIZE,
-			       copy_size);
-			skb_put(rxq->skb, copy_size);
-			rxq->left_size = rx_bytes - copy_size;
+			if (MVNETA_SKB_SZ(rx_bytes) > PAGE_SIZE)
+				psize = PAGE_SIZE - MVNETA_PAD -
+					MVNETA_MH_SIZE;
 
+			dma_sync_single_range_for_cpu(dev->dev.parent,
+						      phys_addr, 0, psize,
+						      DMA_FROM_DEVICE);
+
+			rxq->skb = build_skb(data, PAGE_SIZE);
+			if (!rxq->skb)
+				break;
+
+			rx_desc->buf_phys_addr = 0;
+			frag_num = 0;
+			skb_reserve(rxq->skb, MVNETA_MH_SIZE + NET_SKB_PAD);
+			skb_put(rxq->skb, psize);
 			mvneta_rx_csum(pp, rx_status, rxq->skb);
-			if (rxq->left_size == 0) {
-				int size = copy_size + MVNETA_MH_SIZE;
-
-				dma_sync_single_range_for_cpu(dev->dev.parent,
-							      phys_addr, 0,
-							      size,
-							      DMA_FROM_DEVICE);
-
-				/* leave the descriptor and buffer untouched */
-			} else {
-				/* refill descriptor with new buffer later */
-				rx_desc->buf_phys_addr = 0;
-
-				frag_num = 0;
-				frag_offset = copy_size + MVNETA_MH_SIZE;
-				frag_size = min(rxq->left_size,
-						(int)(PAGE_SIZE - frag_offset));
-				skb_add_rx_frag(rxq->skb, frag_num, page,
-						frag_offset, frag_size,
-						PAGE_SIZE);
-				page_pool_unmap_page(rxq->page_pool, page);
-				rxq->left_size -= frag_size;
-			}
+			page_pool_unmap_page(rxq->page_pool, page);
+			rxq->left_size = rx_bytes - psize;
 		} else {
 			/* Middle or Last descriptor */
 			if (unlikely(!rxq->skb)) {
@@ -2020,27 +1997,18 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 					 rx_status);
 				continue;
 			}
-			if (!rxq->left_size) {
-				/* last descriptor has only FCS */
-				/* and can be discarded */
-				dma_sync_single_range_for_cpu(dev->dev.parent,
-							      phys_addr, 0,
-							      ETH_FCS_LEN,
-							      DMA_FROM_DEVICE);
-				/* leave the descriptor and buffer untouched */
-			} else {
+			if (rxq->left_size) {
 				/* refill descriptor with new buffer later */
 				rx_desc->buf_phys_addr = 0;
 
-				frag_num = skb_shinfo(rxq->skb)->nr_frags;
-				frag_offset = 0;
-				frag_size = min(rxq->left_size,
-						(int)(PAGE_SIZE - frag_offset));
-				skb_add_rx_frag(rxq->skb, frag_num, page,
-						frag_offset, frag_size,
-						PAGE_SIZE);
-
 				page_pool_unmap_page(rxq->page_pool, page);
+
+				frag_num = skb_shinfo(rxq->skb)->nr_frags;
+				frag_size = min(rxq->left_size, (int)PAGE_SIZE -
+						(int)MVNETA_PAD);
+				skb_add_rx_frag(rxq->skb, frag_num, page,
+						NET_SKB_PAD, frag_size,
+						PAGE_SIZE);
 
 				rxq->left_size -= frag_size;
 			}
@@ -2931,7 +2899,10 @@ static void mvneta_rxq_hw_init(struct mvneta_port *pp,
 		/* Set Offset */
 		mvneta_rxq_offset_set(pp, rxq, 0);
 		mvneta_rxq_buf_size_set(pp, rxq, PAGE_SIZE < SZ_64K ?
-					PAGE_SIZE :
+					/* Leave enough room for skb_shared_info
+					 * and NET_SKB_PAD
+					 */
+					PAGE_SIZE - MVNETA_PAD :
 					MVNETA_RX_BUF_SIZE(pp->pkt_size));
 		mvneta_rxq_bm_disable(pp, rxq);
 		mvneta_rxq_fill(pp, rxq, rxq->size);
