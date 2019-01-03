@@ -2792,10 +2792,10 @@ skb_zerocopy(struct sk_buff *to, struct sk_buff *from, int len, int hlen)
 	} else {
 		plen = min_t(int, skb_headlen(from), len);
 		if (plen) {
-			page = virt_to_head_page(from->head);
+			page = virt_to_head_page(from->head); //XXX
 			offset = from->data - (unsigned char *)page_address(page);
-			__skb_fill_page_desc(to, 0, page, offset, plen);
-			get_page(page);
+			__skb_fill_page_desc(to, 0, page, offset, plen); //XXX
+			get_page(page); //XXX
 			j = 1;
 			len -= plen;
 		}
@@ -3461,7 +3461,7 @@ static inline skb_frag_t skb_head_frag_to_page_desc(struct sk_buff *frag_skb)
 	skb_frag_t head_frag;
 	struct page *page;
 
-	page = virt_to_head_page(frag_skb->head);
+	page = virt_to_head_page(frag_skb->head); // XXX
 	head_frag.page.p = page;
 	head_frag.page_offset = frag_skb->data -
 		(unsigned char *)page_address(page);
@@ -3702,7 +3702,7 @@ normal:
 				err = -EINVAL;
 				goto err;
 			}
-
+			// XXX: calling skb_head_frag_to_page_desc()
 			*nskb_frag = (i < 0) ? skb_head_frag_to_page_desc(frag_skb) : *frag;
 			__skb_frag_ref(nskb_frag);
 			size = skb_frag_size(nskb_frag);
@@ -3845,10 +3845,10 @@ int skb_gro_receive(struct sk_buff *p, struct sk_buff *skb)
 	} else if (skb->head_frag) {
 		int nr_frags = pinfo->nr_frags;
 		skb_frag_t *frag = pinfo->frags + nr_frags;
-		struct page *page = virt_to_head_page(skb->head);
+		struct page *page = virt_to_head_page(skb->head); // XXX
 		unsigned int first_size = headlen - offset;
 		unsigned int first_offset;
-
+// XXX: Option page_pool unmap or goto merge? In merge skb is added as frag_list
 		if (nr_frags + 1 + skbinfo->nr_frags > MAX_SKB_FRAGS)
 			goto merge;
 
@@ -3858,7 +3858,7 @@ int skb_gro_receive(struct sk_buff *p, struct sk_buff *skb)
 
 		pinfo->nr_frags = nr_frags + 1 + skbinfo->nr_frags;
 
-		frag->page.p	  = page;
+		frag->page.p	  = page; // XXX comes from skb->head
 		frag->page_offset = first_offset;
 		skb_frag_size_set(frag, first_size);
 
@@ -3866,7 +3866,7 @@ int skb_gro_receive(struct sk_buff *p, struct sk_buff *skb)
 		/* We dont need to clear skbinfo->nr_frags here */
 
 		delta_truesize = skb->truesize - SKB_DATA_ALIGN(sizeof(struct sk_buff));
-		NAPI_GRO_CB(skb)->free = NAPI_GRO_FREE_STOLEN_HEAD;
+		NAPI_GRO_CB(skb)->free = NAPI_GRO_FREE_STOLEN_HEAD; // XXX calls napi_skb_free_stolen_head
 		goto done;
 	}
 

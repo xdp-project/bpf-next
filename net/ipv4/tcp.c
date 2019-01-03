@@ -1815,8 +1815,8 @@ static int tcp_zerocopy_receive(struct sock *sk,
 			}
 			zc->recv_skip_hint -= remaining;
 			break;
-		}
-		ret = vm_insert_page(vma, address + length,
+		} // page_pool pages cannot be used for SKB "frags", without first having released the DMA state
+		ret = vm_insert_page(vma, address + length, // XXX issue?
 				     skb_frag_page(frags));
 		if (ret)
 			break;
