@@ -1330,6 +1330,11 @@ static inline struct skb_shared_hwtstamps *skb_hwtstamps(struct sk_buff *skb)
 	return &skb_shinfo(skb)->hwtstamps;
 }
 
+static inline bool skb_mem_info_can_coalesce(struct sk_buff *skb)
+{
+	return skb->mem_info.type <= MEM_TYPE_PAGE_ORDER0;
+}
+
 static inline struct ubuf_info *skb_zcopy(struct sk_buff *skb)
 {
 	bool is_zcopy = skb && skb_shinfo(skb)->tx_flags & SKBTX_DEV_ZEROCOPY;

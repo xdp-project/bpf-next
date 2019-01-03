@@ -4853,6 +4853,10 @@ bool skb_try_coalesce(struct sk_buff *to, struct sk_buff *from,
 		return false;
 	if (skb_zcopy(to) || skb_zcopy(from))
 		return false;
+// Idea#1: Return false in-case of page_pool backed page, simply don't
+//         allow page_pool pages to be coalesced
+	if (!skb_mem_info_can_coalesce(skb))
+		return false;
 
 	if (skb_headlen(from) != 0) {
 		struct page *page;
@@ -4866,8 +4870,8 @@ bool skb_try_coalesce(struct sk_buff *to, struct sk_buff *from,
 			return false;
 
 		delta = from->truesize - SKB_DATA_ALIGN(sizeof(struct sk_buff));
-
-		page = virt_to_head_page(from->head);
+// Idea#2: release page_pool DMA mapping here?
+		page = virt_to_head_page(from->head); // XXX-issue
 		offset = from->data - (unsigned char *)page_address(page);
 
 		skb_fill_page_desc(to, to_shinfo->nr_frags,
