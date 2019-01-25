@@ -111,6 +111,7 @@ noinline
 static struct page *__page_pool_alloc_pages_slow(struct page_pool *pool,
 						 gfp_t _gfp)
 {
+	struct page_shadow *_page;
 	struct page *page;
 	gfp_t gfp = _gfp;
 	dma_addr_t dma;
@@ -136,7 +137,7 @@ static struct page *__page_pool_alloc_pages_slow(struct page_pool *pool,
 	if (!(pool->p.flags & PP_FLAG_DMA_MAP))
 		goto skip_dma_map;
 
-	/* Setup DMA mapping: use page->private for DMA-addr
+	/* Setup DMA mapping: use struct-page area for storing DMA-addr
 	 * This mapping is kept for lifetime of page, until leaving pool.
 	 */
 	dma = dma_map_page(pool->p.dev, page, 0,
@@ -146,7 +147,8 @@ static struct page *__page_pool_alloc_pages_slow(struct page_pool *pool,
 		put_page(page);
 		return NULL;
 	}
-	set_page_private(page, dma); /* page->private = dma; */
+	_page = (struct page_shadow *)page;
+	_page->dma_addr = dma;
 
 skip_dma_map:
 	/* When page just alloc'ed is should/must have refcnt 1. */
@@ -175,13 +177,21 @@ EXPORT_SYMBOL(page_pool_alloc_pages);
 static void __page_pool_clean_page(struct page_pool *pool,
 				   struct page *page)
 {
+	struct page_shadow *_page = (struct page_shadow *)page;
+	dma_addr_t dma;
+
 	if (!(pool->p.flags & PP_FLAG_DMA_MAP))
 		return;
 
+	dma = _page->dma_addr;
+
 	/* DMA unmap */
-	dma_unmap_page(pool->p.dev, page_private(page),
+	dma_unmap_page(pool->p.dev, dma,
 		       PAGE_SIZE << pool->p.order, pool->p.dma_dir);
-	set_page_private(page, 0);
+	_page->dma_addr = 0;
+	/* 1. Make sure we don't need to list-init page->lru.
+	 * 2. What does it mean: bit 0 of LRU first word is used for PageTail()
+	 */
 }
 
 /* Return a page to the page allocator, cleaning up our state */
