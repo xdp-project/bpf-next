@@ -98,6 +98,52 @@ struct page_pool {
 	struct ptr_ring ring;
 };
 
+/* Until we can update struct-page, have a shadow struct-page, that
+ * include our use-case
+ * Used to store retrieve dma addresses from network drivers.
+ * Never access this directly, use helper functions provided
+ * page_pool_get_dma_addr()
+ */
+struct page_shadow {
+	unsigned long flags;		/* Atomic flags, some possibly
+					 * updated asynchronously
+					 */
+	/*
+	 * Five words (20/40 bytes) are available in this union.
+	 * WARNING: bit 0 of the first word is used for PageTail(). That
+	 * means the other users of this union MUST NOT use the bit to
+	 * avoid collision and false-positive PageTail().
+	 */
+	union {
+		struct {	/* Page cache and anonymous pages */
+			/**
+			 * @lru: Pageout list, eg. active_list protected by
+			 * zone_lru_lock.  Sometimes used as a generic list
+			 * by the page owner.
+			 */
+			struct list_head lru;
+			/* See page-flags.h for PAGE_MAPPING_FLAGS */
+			struct address_space *mapping;
+			pgoff_t index;		/* Our offset within mapping. */
+			/**
+			 * @private: Mapping-private opaque data.
+			 * Usually used for buffer_heads if PagePrivate.
+			 * Used for swp_entry_t if PageSwapCache.
+			 * Indicates order in the buddy system if PageBuddy.
+			 */
+			unsigned long private;
+		};
+		struct {	/* page_pool used by netstack */
+			/**
+			 * @dma_addr: Page_pool need to store DMA-addr, and
+			 * cannot use @private, as DMA-mappings can be 64bit
+			 * even on 32-bit Architectures.
+			 */
+			dma_addr_t dma_addr; /* Shares area with @lru */
+		};
+	};
+};
+
 struct page *page_pool_alloc_pages(struct page_pool *pool, gfp_t gfp);
 
 static inline struct page *page_pool_dev_alloc_pages(struct page_pool *pool)
@@ -139,6 +185,15 @@ static inline bool is_page_pool_compiled_in(void)
 #else
 	return false;
 #endif
+}
+
+static inline dma_addr_t page_pool_get_dma_addr(struct page *page)
+{
+	struct page_shadow *_page;
+
+	_page = (struct page_shadow *)page;
+
+	return _page->dma_addr;
 }
 
 #endif /* _NET_PAGE_POOL_H */
