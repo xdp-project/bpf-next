@@ -77,6 +77,16 @@ struct page {
 	 * avoid collision and false-positive PageTail().
 	 */
 	union {
+		/*
+		 * This is used by the networking page_pool API
+		 * to store and retrieve DMA addresses from network
+		 * drivers and netrworking code during their page recycling
+		 * operations. DMA addresses should be aligned, thus bit 0
+		 * should never be set to 1.
+		 */
+		struct {
+			dma_addr_t dma_addr;
+		};
 		struct {	/* Page cache and anonymous pages */
 			/**
 			 * @lru: Pageout list, eg. active_list protected by
