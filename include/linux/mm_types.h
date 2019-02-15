@@ -17,6 +17,8 @@
 
 #include <asm/mmu.h>
 
+#include <net/xdp.h>
+
 #ifndef AT_VECTOR_SIZE_ARCH
 #define AT_VECTOR_SIZE_ARCH 0
 #endif
@@ -86,6 +88,7 @@ struct page {
 		 */
 		struct {
 			dma_addr_t dma_addr;
+			struct xdp_mem_info mem_info;
 		};
 		struct {	/* Page cache and anonymous pages */
 			/**

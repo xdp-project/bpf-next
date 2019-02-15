@@ -31,6 +31,7 @@
 #include <linux/mm.h> /* Needed by ptr_ring */
 #include <linux/ptr_ring.h>
 #include <linux/dma-direction.h>
+#include <net/xdp.h>
 
 #define PP_FLAG_DMA_MAP 1 /* Should page_pool do the DMA map/unmap */
 #define PP_FLAG_ALL	PP_FLAG_DMA_MAP
@@ -99,6 +100,7 @@ struct page_pool {
 };
 
 struct page *page_pool_alloc_pages(struct page_pool *pool, gfp_t gfp);
+void page_pool_store_mem_info(struct page *page, struct xdp_mem_info *mem);
 
 static inline struct page *page_pool_dev_alloc_pages(struct page_pool *pool)
 {

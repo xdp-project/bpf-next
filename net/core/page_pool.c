@@ -173,6 +173,16 @@ struct page *page_pool_alloc_pages(struct page_pool *pool, gfp_t gfp)
 }
 EXPORT_SYMBOL(page_pool_alloc_pages);
 
+/* Store mem_info on struct page and use it while recycling skb frags
+ */
+void page_pool_store_mem_info(struct page *page, struct xdp_mem_info *mem)
+{
+	page->mem_info = *mem;
+
+	return;
+}
+EXPORT_SYMBOL(page_pool_store_mem_info);
+
 /* Cleanup page_pool state from page */
 static void __page_pool_clean_page(struct page_pool *pool,
 				   struct page *page)

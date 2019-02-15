@@ -591,7 +591,7 @@ typedef unsigned int sk_buff_data_t;
 typedef unsigned char *sk_buff_data_t;
 #endif
 
-/** 
+/**
  *	struct sk_buff - socket buffer
  *	@next: Next buffer in list
  *	@prev: Previous buffer in list
@@ -911,7 +911,7 @@ static inline bool skb_pfmemalloc(const struct sk_buff *skb)
  */
 static inline struct dst_entry *skb_dst(const struct sk_buff *skb)
 {
-	/* If refdst was not refcounted, check we still are in a 
+	/* If refdst was not refcounted, check we still are in a
 	 * rcu_read_lock section
 	 */
 	WARN_ON((skb->_skb_refdst & SKB_DST_NOREF) &&
@@ -2843,7 +2843,13 @@ static inline void skb_frag_ref(struct sk_buff *skb, int f)
  */
 static inline void __skb_frag_unref(skb_frag_t *frag)
 {
-	put_page(skb_frag_page(frag));
+	struct page *page;
+
+	page = skb_frag_page(frag);
+	if (page->mem_info.type ==  MEM_TYPE_PAGE_POOL)
+		xdp_return_skb_page(page_address(page), &page->mem_info);
+	else
+		put_page(page);
 }
 
 /**

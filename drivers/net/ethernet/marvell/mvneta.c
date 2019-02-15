@@ -2005,12 +2005,15 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 				/* refill descriptor with new buffer later */
 				rx_desc->buf_phys_addr = 0;
 
-				/* skb frags[] are not recycled, unmap now */
-				page_pool_unmap_page(rxq->page_pool, page);
-
 				frag_num = skb_shinfo(rxq->skb)->nr_frags;
 				frag_size = min(rxq->left_size, (int)PAGE_SIZE -
 						(int)MVNETA_PAD);
+
+				dma_sync_single_range_for_cpu(dev->dev.parent,
+							      phys_addr, 0,
+							      frag_size,
+							      DMA_FROM_DEVICE);
+				page_pool_store_mem_info(page, &rxq->xdp_rxq.mem);
 				skb_add_rx_frag(rxq->skb, frag_num, page,
 						NET_SKB_PAD, frag_size,
 						PAGE_SIZE);
