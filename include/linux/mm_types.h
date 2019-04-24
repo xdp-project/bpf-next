@@ -87,8 +87,8 @@ struct page {
 		 * should never be set to 1.
 		 */
 		struct {
-			dma_addr_t dma_addr;
 			struct xdp_mem_info mem_info;
+			dma_addr_t dma_addr;
 		};
 		struct {	/* Page cache and anonymous pages */
 			/**
