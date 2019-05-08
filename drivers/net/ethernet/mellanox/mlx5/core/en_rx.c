@@ -316,6 +316,7 @@ mlx5e_add_skb_frag(struct mlx5e_rq *rq, struct sk_buff *skb,
 	dma_sync_single_for_cpu(rq->pdev,
 				di_get_dma(di) + frag_offset,
 				len, DMA_FROM_DEVICE);
+	skb_mark_for_recycle(skb, di->page, &rq->xdp_rxq.mem);
 	page_ref_inc(di->page);
 	skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
 			di->page, frag_offset, len, truesize);
@@ -988,6 +989,7 @@ mlx5e_skb_from_cqe_linear(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe,
 		return NULL;
 
 	/* queue up for recycling/reuse */
+	skb_mark_for_recycle(skb, di->page, &rq->xdp_rxq.mem);
 	page_ref_inc(di->page);
 
 	return skb;
@@ -1223,6 +1225,7 @@ mlx5e_skb_from_cqe_mpwrq_linear(struct mlx5e_rq *rq, struct mlx5e_mpw_info *wi,
 		return NULL;
 
 	/* queue up for recycling/reuse */
+	skb_mark_for_recycle(skb, di->page, &rq->xdp_rxq.mem);
 	page_ref_inc(di->page);
 
 	return skb;
