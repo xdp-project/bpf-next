@@ -299,6 +299,7 @@ mlx5e_add_skb_frag(struct mlx5e_rq *rq, struct sk_buff *skb,
 	dma_sync_single_for_cpu(rq->pdev,
 				page_pool_get_dma_addr(page) + frag_offset,
 				len, DMA_FROM_DEVICE);
+	page_pool_store_mem_info(page, &rq->xdp_rxq.mem);
 	page_ref_inc(page);
 	skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
 			page, frag_offset, len, truesize);
@@ -937,6 +938,8 @@ mlx5e_skb_from_cqe_linear(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe,
 		return NULL;
 	}
 
+	page_pool_store_mem_info(page, &rq->xdp_rxq.mem);
+
 	rcu_read_lock();
 	consumed = mlx5e_xdp_handle(rq, page, va, &rx_headroom, &cqe_bcnt);
 	rcu_read_unlock();
@@ -1152,6 +1155,8 @@ mlx5e_skb_from_cqe_mpwrq_linear(struct mlx5e_rq *rq, struct mlx5e_mpw_info *wi,
 				      head_offset, frag_size, DMA_FROM_DEVICE);
 	prefetchw(va); /* xdp_frame data area */
 	prefetch(data);
+
+	page_pool_store_mem_info(page, &rq->xdp_rxq.mem);
 
 	rcu_read_lock();
 	consumed = mlx5e_xdp_handle(rq, page, va, &rx_headroom, &cqe_bcnt32);
