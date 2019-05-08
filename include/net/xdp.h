@@ -46,8 +46,8 @@ enum xdp_mem_type {
 #define XDP_XMIT_FLAGS_MASK	XDP_XMIT_FLUSH
 
 struct xdp_mem_info {
-	u32 type; /* enum xdp_mem_type, but known size type */
-	u32 id;
+	u16 type; /* enum xdp_mem_type, but known size type */
+	u16 id;
 };
 
 struct page_pool;
@@ -128,6 +128,7 @@ struct xdp_frame *convert_to_xdp_frame(struct xdp_buff *xdp)
 void xdp_return_frame(struct xdp_frame *xdpf);
 void xdp_return_frame_rx_napi(struct xdp_frame *xdpf);
 void xdp_return_buff(struct xdp_buff *xdp);
+void xdp_return_skb_page(void *data, struct xdp_mem_info *mem_info);
 
 int xdp_rxq_info_reg(struct xdp_rxq_info *xdp_rxq,
 		     struct net_device *dev, u32 queue_index);

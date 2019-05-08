@@ -42,11 +42,11 @@ struct xdp_mem_allocator {
 
 static u32 xdp_mem_id_hashfn(const void *data, u32 len, u32 seed)
 {
-	const u32 *k = data;
-	const u32 key = *k;
+	const u16 *k = data;
+	const u16 key = *k;
 
 	BUILD_BUG_ON(FIELD_SIZEOF(struct xdp_mem_allocator, mem.id)
-		     != sizeof(u32));
+		     != sizeof(u16));
 
 	/* Use cyclic increasing ID as direct hash key */
 	return key;
@@ -56,7 +56,7 @@ static int xdp_mem_id_cmp(struct rhashtable_compare_arg *arg,
 			  const void *ptr)
 {
 	const struct xdp_mem_allocator *xa = ptr;
-	u32 mem_id = *(u32 *)arg->key;
+	u16 mem_id = *(u16 *)arg->key;
 
 	return xa->mem.id != mem_id;
 }
@@ -378,6 +378,17 @@ void xdp_return_buff(struct xdp_buff *xdp)
 	__xdp_return(xdp->data, &xdp->rxq->mem, true, xdp->handle);
 }
 EXPORT_SYMBOL_GPL(xdp_return_buff);
+
+void xdp_return_skb_page(void *data, struct xdp_mem_info *mem_info)
+{
+	struct page *page;
+
+	page = virt_to_head_page(data);
+	/* Driver set this to memory recycling info. Reset it on recycle */
+	set_page_private(page, 0);
+	__xdp_return(data, mem_info, false, 0);
+}
+EXPORT_SYMBOL(xdp_return_skb_page);
 
 int xdp_attachment_query(struct xdp_attachment_info *info,
 			 struct netdev_bpf *bpf)

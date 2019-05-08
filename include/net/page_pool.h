@@ -31,6 +31,7 @@
 #include <linux/mm.h> /* Needed by ptr_ring */
 #include <linux/ptr_ring.h>
 #include <linux/dma-direction.h>
+#include <net/xdp.h>
 
 #define PP_FLAG_DMA_MAP 1 /* Should page_pool do the DMA map/unmap */
 #define PP_FLAG_ALL	PP_FLAG_DMA_MAP
@@ -107,9 +108,18 @@ static inline struct page *page_pool_dev_alloc_pages(struct page_pool *pool)
 	return page_pool_alloc_pages(pool, gfp);
 }
 
+/* Store mem_info on struct page and use it while recycling skb frags
+ */
+static inline void page_pool_store_mem_info(struct page *page,
+					    struct xdp_mem_info *mem)
+{
+	set_page_private(page, (unsigned long)mem);
+}
+
 struct page_pool *page_pool_create(const struct page_pool_params *params);
 
 void page_pool_destroy(struct page_pool *pool);
+void page_pool_unmap_page(struct page_pool *pool, struct page *page);
 
 /* Never call this directly, use helpers below */
 void __page_pool_put_page(struct page_pool *pool,
@@ -130,6 +140,11 @@ static inline void page_pool_recycle_direct(struct page_pool *pool,
 					    struct page *page)
 {
 	__page_pool_put_page(pool, page, true);
+}
+
+static inline dma_addr_t page_pool_get_dma_addr(struct page *page)
+{
+	return page->dma_addr;
 }
 
 static inline bool is_page_pool_compiled_in(void)
