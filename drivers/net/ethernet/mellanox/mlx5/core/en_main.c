@@ -343,7 +343,7 @@ static void mlx5e_init_frags_partition(struct mlx5e_rq *rq)
 	struct mlx5e_wqe_frag_info next_frag, *prev;
 	int i;
 
-	next_frag.di = &rq->wqe.di[0];
+	next_frag.pagep = &rq->wqe.page_arr[0];
 	next_frag.offset = 0;
 	prev = NULL;
 
@@ -355,7 +355,7 @@ static void mlx5e_init_frags_partition(struct mlx5e_rq *rq)
 
 		for (f = 0; f < rq->wqe.info.num_frags; f++, frag++) {
 			if (next_frag.offset + frag_info[f].frag_stride > PAGE_SIZE) {
-				next_frag.di++;
+				next_frag.pagep++;
 				next_frag.offset = 0;
 				if (prev)
 					prev->last_in_page = true;
@@ -372,14 +372,15 @@ static void mlx5e_init_frags_partition(struct mlx5e_rq *rq)
 		prev->last_in_page = true;
 }
 
-static int mlx5e_init_di_list(struct mlx5e_rq *rq,
-			      int wq_sz, int cpu)
+static int mlx5e_init_page_arr(struct mlx5e_rq *rq,
+			       int wq_sz, int cpu)
 {
 	int len = wq_sz << rq->wqe.info.log_num_frags;
 
-	rq->wqe.di = kvzalloc_node(array_size(len, sizeof(*rq->wqe.di)),
-				   GFP_KERNEL, cpu_to_node(cpu));
-	if (!rq->wqe.di)
+	rq->wqe.page_arr =
+		kvzalloc_node(array_size(len, sizeof(*rq->wqe.page_arr)),
+			      GFP_KERNEL, cpu_to_node(cpu));
+	if (!rq->wqe.page_arr)
 		return -ENOMEM;
 
 	mlx5e_init_frags_partition(rq);
@@ -387,9 +388,9 @@ static int mlx5e_init_di_list(struct mlx5e_rq *rq,
 	return 0;
 }
 
-static void mlx5e_free_di_list(struct mlx5e_rq *rq)
+static void mlx5e_free_page_arr(struct mlx5e_rq *rq)
 {
-	kvfree(rq->wqe.di);
+	kvfree(rq->wqe.page_arr);
 }
 
 static int mlx5e_alloc_rq(struct mlx5e_channel *c,
@@ -500,7 +501,7 @@ static int mlx5e_alloc_rq(struct mlx5e_channel *c,
 			goto err_free;
 		}
 
-		err = mlx5e_init_di_list(rq, wq_sz, c->cpu);
+		err = mlx5e_init_page_arr(rq, wq_sz, c->cpu);
 		if (err)
 			goto err_free;
 		rq->post_wqes = mlx5e_post_rx_wqes;
@@ -526,7 +527,7 @@ static int mlx5e_alloc_rq(struct mlx5e_channel *c,
 
 	/* Create a page_pool and register it with rxq */
 	pp_params.order     = 0;
-	pp_params.flags     = 0; /* No-internal DMA mapping in page_pool */
+	pp_params.flags     = PP_FLAG_DMA_MAP; /* Internal DMA mapping in page_pool */
 	pp_params.pool_size = pool_size;
 	pp_params.nid       = cpu_to_node(c->cpu);
 	pp_params.dev       = c->pdev;
@@ -591,9 +592,6 @@ static int mlx5e_alloc_rq(struct mlx5e_channel *c,
 		rq->dim.mode = NET_DIM_CQ_PERIOD_MODE_START_FROM_EQE;
 	}
 
-	rq->page_cache.head = 0;
-	rq->page_cache.tail = 0;
-
 	return 0;
 
 err_free:
@@ -604,7 +602,7 @@ err_free:
 		break;
 	default: /* MLX5_WQ_TYPE_CYCLIC */
 		kvfree(rq->wqe.frags);
-		mlx5e_free_di_list(rq);
+		mlx5e_free_page_arr(rq);
 	}
 
 err_rq_wq_destroy:
@@ -620,8 +618,6 @@ err_rq_wq_destroy:
 
 static void mlx5e_free_rq(struct mlx5e_rq *rq)
 {
-	int i;
-
 	if (rq->xdp_prog)
 		bpf_prog_put(rq->xdp_prog);
 
@@ -636,15 +632,9 @@ static void mlx5e_free_rq(struct mlx5e_rq *rq)
 		break;
 	default: /* MLX5_WQ_TYPE_CYCLIC */
 		kvfree(rq->wqe.frags);
-		mlx5e_free_di_list(rq);
+		mlx5e_free_page_arr(rq);
 	}
 
-	for (i = rq->page_cache.head; i != rq->page_cache.tail;
-	     i = (i + 1) & (MLX5E_CACHE_SIZE - 1)) {
-		struct mlx5e_dma_info *dma_info = &rq->page_cache.page_cache[i];
-
-		mlx5e_page_release(rq, dma_info, false);
-	}
 	mlx5_wq_destroy(&rq->wq_ctrl);
 }
 
