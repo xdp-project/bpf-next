@@ -2004,11 +2004,8 @@ mvneta_swbm_rx_frame(struct mvneta_port *pp,
 	struct net_device *dev = pp->dev;
 	enum dma_data_direction dma_dir;
 	struct xdp_buff xdp = {
-		.data_hard_start = data,
-		.data = data + MVNETA_SKB_HEADROOM,
 		.rxq = &rxq->xdp_rxq,
 	};
-	xdp_set_data_meta_invalid(&xdp);
 
 	if (MVNETA_SKB_SIZE(rx_desc->data_size) > PAGE_SIZE) {
 		len = MVNETA_MAX_RX_BUF_SIZE;
@@ -2017,12 +2014,19 @@ mvneta_swbm_rx_frame(struct mvneta_port *pp,
 		len = rx_desc->data_size;
 		data_len += (len - ETH_FCS_LEN);
 	}
-	xdp.data_end = xdp.data + data_len;
 
 	dma_dir = page_pool_get_dma_dir(rxq->page_pool);
 	dma_sync_single_range_for_cpu(dev->dev.parent,
 				      rx_desc->buf_phys_addr, 0,
 				      len, dma_dir);
+
+	/* Prefetch header */
+	prefetch(data);
+
+	xdp.data_hard_start = data;
+	xdp.data = data + MVNETA_SKB_HEADROOM;
+	xdp.data_end = xdp.data + data_len;
+	xdp_set_data_meta_invalid(&xdp);
 
 	if (xdp_prog) {
 		u32 ret;
@@ -2114,15 +2118,11 @@ static int mvneta_rx_swbm(struct napi_struct *napi,
 	/* Fairness NAPI loop */
 	while (done < budget && done < rx_pending) {
 		struct mvneta_rx_desc *rx_desc = mvneta_rxq_next_desc_get(rxq);
-		unsigned char *data;
 		struct page *page;
 		int index;
 
 		index = rx_desc - rxq->descs;
 		page = (struct page *)rxq->buf_virt_addr[index];
-		data = page_address(page);
-		/* Prefetch header */
-		prefetch(data);
 
 		rxq->refill_num++;
 		done++;
