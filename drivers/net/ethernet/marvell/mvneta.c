@@ -2175,7 +2175,7 @@ mvneta_swbm_rx_frame(struct mvneta_port *pp,
 		rxq->skb_alloc_err++;
 		return -ENOMEM;
 	}
-	page_pool_release_page(rxq->page_pool, page);
+	//page_pool_release_page(rxq->page_pool, page);
 
 	page_pool_store_mem_info(page, &rxq->xdp_rxq.mem);
 	skb_reserve(rxq->skb,
