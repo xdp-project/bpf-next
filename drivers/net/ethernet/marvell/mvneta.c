@@ -2177,6 +2177,7 @@ mvneta_swbm_rx_frame(struct mvneta_port *pp,
 	}
 	page_pool_release_page(rxq->page_pool, page);
 
+	page_pool_store_mem_info(page, &rxq->xdp_rxq.mem);
 	skb_reserve(rxq->skb,
 		    MVNETA_MH_SIZE + xdp.data - xdp.data_hard_start);
 	skb_put(rxq->skb, xdp.data_end - xdp.data);
