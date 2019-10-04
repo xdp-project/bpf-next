@@ -2175,8 +2175,9 @@ mvneta_swbm_rx_frame(struct mvneta_port *pp,
 		rxq->skb_alloc_err++;
 		return -ENOMEM;
 	}
-	page_pool_release_page(rxq->page_pool, page);
+	//page_pool_release_page(rxq->page_pool, page);
 
+	page_pool_store_mem_info(page, &rxq->xdp_rxq.mem);
 	skb_reserve(rxq->skb,
 		    MVNETA_MH_SIZE + xdp.data - xdp.data_hard_start);
 	skb_put(rxq->skb, xdp.data_end - xdp.data);
@@ -2216,7 +2217,7 @@ mvneta_swbm_add_rx_fragment(struct mvneta_port *pp,
 				page, MVNETA_SKB_HEADROOM, data_len,
 				PAGE_SIZE);
 
-		page_pool_release_page(rxq->page_pool, page);
+		//page_pool_release_page(rxq->page_pool, page);
 		rxq->left_size -= data_len;
 		rx_desc->buf_phys_addr = 0;
 	}
