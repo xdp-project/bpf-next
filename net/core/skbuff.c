@@ -68,6 +68,7 @@
 #include <net/ip6_checksum.h>
 #include <net/xfrm.h>
 #include <net/mpls.h>
+#include <net/page_pool.h>
 
 #include <linux/uaccess.h>
 #include <trace/events/skb.h>
@@ -584,6 +585,9 @@ static void skb_clone_fraglist(struct sk_buff *skb)
 static void skb_free_head(struct sk_buff *skb)
 {
 	unsigned char *head = skb->head;
+
+	if (skb->head_frag && page_pool_return_skb_page(head))
+		return;
 
 	if (skb->head_frag)
 		skb_free_frag(head);
