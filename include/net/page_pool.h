@@ -33,6 +33,7 @@
 #include <linux/mm.h> /* Needed by ptr_ring */
 #include <linux/ptr_ring.h>
 #include <linux/dma-direction.h>
+#include <net/xdp.h>
 
 #define PP_FLAG_DMA_MAP 1 /* Should page_pool do the DMA map/unmap */
 #define PP_FLAG_ALL	PP_FLAG_DMA_MAP
@@ -109,6 +110,12 @@ struct page_pool {
 	refcount_t user_cnt;
 };
 
+/* Used to store/retrieve hi/lo bytes from xdp_mem_info to page->private */
+union page_pool_xmi {
+	u32 raw;
+	struct xdp_mem_info mem_info;
+};
+
 struct page *page_pool_alloc_pages(struct page_pool *pool, gfp_t gfp);
 
 static inline struct page *page_pool_dev_alloc_pages(struct page_pool *pool)
@@ -125,6 +132,18 @@ static
 inline enum dma_data_direction page_pool_get_dma_dir(struct page_pool *pool)
 {
 	return pool->p.dma_dir;
+}
+
+bool page_pool_return_skb_page(void *data);
+/* Store mem_info on struct page and use it while recycling skb frags
+ */
+static inline void page_pool_store_mem_info(struct page *page,
+					    struct xdp_mem_info *mem)
+{
+	union page_pool_xmi info;
+
+	info.mem_info = *mem;
+	set_page_private(page, info.raw);
 }
 
 struct page_pool *page_pool_create(const struct page_pool_params *params);

@@ -15,6 +15,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/page-flags.h>
 #include <linux/mm.h> /* for __put_page() */
+#include <net/xdp.h>
 
 #include <trace/events/page_pool.h>
 
@@ -397,3 +398,34 @@ bool __page_pool_request_shutdown(struct page_pool *pool)
 	return __page_pool_safe_to_destroy(pool);
 }
 EXPORT_SYMBOL(__page_pool_request_shutdown);
+
+bool page_pool_return_skb_page(void *data)
+{
+	struct xdp_mem_info mem_info;
+	union page_pool_xmi info;
+	struct page *page;
+
+	page = virt_to_head_page(data);
+	info.raw = page_private(page);
+	mem_info = info.mem_info;
+
+	/* If a buffer is marked for recycle and does not belong to
+	 * MEM_TYPE_PAGE_POOL, the buffers will be eventually freed from the
+	 * network stack and kfree_skb, but the DMA region will *not* be
+	 * correctly unmapped. WARN here for the recycling misusage
+	 */
+	if (mem_info.type != MEM_TYPE_PAGE_POOL) {
+		WARN_ONCE(true, "Tried to recycle non MEM_TYPE_PAGE_POOL");
+		return false;
+	}
+
+	/* Driver set this to memory recycling info. Reset it on recycle
+	 * This will *not* work for NIC using a split-page memory model.
+	 * The page will be returned to the pool here regardless of the
+	 * 'flipped' fragment being in use or not
+	 */
+	set_page_private(page, 0);
+	xdp_return_skb_frame(data, &mem_info);
+
+	return true;
+}
