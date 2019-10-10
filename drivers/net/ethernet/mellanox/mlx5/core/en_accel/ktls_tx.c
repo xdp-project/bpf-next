@@ -308,7 +308,7 @@ void mlx5e_ktls_tx_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 	struct mlx5e_sq_stats *stats = sq->stats;
 
 	mlx5e_tx_dma_unmap(sq->pdev, dma);
-	__skb_frag_unref(wi->resync_dump_frag);
+	__skb_frag_unref(wi->resync_dump_frag, false);
 	stats->tls_dump_packets++;
 	stats->tls_dump_bytes += wi->num_bytes;
 }
