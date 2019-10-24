@@ -419,13 +419,17 @@ bool page_pool_return_skb_page(void *data)
 		return false;
 	}
 
-	/* Driver set this to memory recycling info. Reset it on recycle
-	 * This will *not* work for NIC using a split-page memory model.
-	 * The page will be returned to the pool here regardless of the
-	 * 'flipped' fragment being in use or not
+	/* Try to support drivers that do refcnt recycling tricks. If the driver
+	 * elevates the page refcnt return false without actually recycling the
+	 * page. This will force the refcnt to be decreased in skb_free_frag(),
+	 * which will bne called.
+	 * Once all the page fragments are consumed recycle the page
 	 */
-	set_page_private(page, 0);
-	xdp_return_skb_frame(data, &mem_info);
+	if (likely(page_ref_count(page) == 1)) {
+		/* Driver set this to memory recycling info. Reset it on recycle */
+		set_page_private(page, 0);
+		xdp_return_skb_frame(data, &mem_info);
+	}
 
-	return true;
+	return false;
 }
