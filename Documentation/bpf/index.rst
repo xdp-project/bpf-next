@@ -62,6 +62,7 @@ Map types
    :maxdepth: 1
 
    map_cgroup_storage
+   map_devmap
 
 
 Testing and debugging BPF
